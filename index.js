@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import userRouter from "./routes/userRouter.js";
 import jwt from "jsonwebtoken";
+import productRouter from "./routes/productRouter.js";
 
 dotenv.config();
 
@@ -47,6 +48,7 @@ app.use((req, res, next) => {
 });
 
 app.use("/users", userRouter);
+app.use("/products", productRouter);
 
 app.listen(3000, () => {
     console.log("Server is running on port 3000");
