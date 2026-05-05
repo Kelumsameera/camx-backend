@@ -8,50 +8,43 @@ dotenv.config();
 
 const app = express();
 
+// Database Connection
 mongoose
     .connect(process.env.MONGO_URI)
     .then(() => {
         console.log("Connected to DB");
     })
     .catch((error) => {
-        console.log(error);
+        console.log("DB Connection Error:", error);
     });
+
 app.use(express.json());
 
-app.use(
-    (req, res, next) => {
+// Auth Middleware
+app.use((req, res, next) => {
+    const authorizationHeader = req.header("Authorization");
 
-        const Authorizationheaders = req.header("Authorization");
-        if (Authorizationheaders != null) {
-            const token = Authorizationheaders.replace("Bearer ", "");
-            console.log(token);
+    if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+        const token = authorizationHeader.replace("Bearer ", "");
 
-            jwt.verify(token, "secretKey96$2025",
-                (error, content) => {
-                    
-                    if (content == null){
-                        console.log("Invalid token");
-
-
-
-                    }else {
-                        console.log(content);
-
-                    }
-
-                }
-            )
-
-
-
-        }
-      
-
-
+        // token verify
+        jwt.verify(token, process.env.SECRET_KEY, (error, content) => {
+            if (error) {
+                // Token invalid or expired
+                return res.status(401).json({
+                    message: "Invalid or expired token",
+                });
+            } else {
+                // Token valid, content contains the payload
+                req.user = content;
+                next();
+            }
+        });
+    } else {
+        // Token not provided
         next();
-
     }
-);
+});
 
 app.use("/users", userRouter);
 
