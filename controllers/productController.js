@@ -67,7 +67,7 @@ export function deleteProduct(req, res) {
             message: "Forbidden: Admins only",
         });
     } 
-    const productId = req.params.id;
+    const productId = req.params.productId;
     Product.findOneAndDelete({ productId: productId }).then(
         (deletedProduct) => {
             if (deletedProduct) {
@@ -88,3 +88,66 @@ export function deleteProduct(req, res) {
     });
 }
 
+export async function updateProduct(req, res) {
+    try {
+        // Admin check
+        if (!isAdmin(req)) {
+            return res.status(403).json({
+                message: "Forbidden: Admins only",
+            });
+        }
+
+        const productId = req.params.productId;
+
+        // Update product
+        const updatedProduct = await Product.findOneAndUpdate(
+            { productId: productId },
+            req.body,
+            {
+                new: true, // return updated document
+                runValidators: true,
+            }
+        );
+
+        // Product not found
+        if (!updatedProduct) {
+            return res.status(404).json({
+                message: "Product not found",
+            });
+        }
+
+        // Success response
+        return res.status(200).json({
+            message: "Product updated successfully",
+            product: updatedProduct,
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: "Error updating product",
+            error: error.message,
+        });
+    }
+}
+export function getProductById(req, res) {
+    const productId = req.params.productId;
+
+    Product.findOne({ productId: productId })
+        .then((product) => {
+
+            if (product == null) {
+                return res.status(404).json({
+                    message: "Product not found",
+                });
+            }
+
+            return res.status(200).json(product);
+
+        })
+        .catch((error) => {
+            return res.status(500).json({
+                message: "Error fetching product",
+                error: error.message,
+            });
+        });
+}
