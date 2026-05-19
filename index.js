@@ -1,55 +1,136 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import userRouter from "./routes/userRouter.js";
 import jwt from "jsonwebtoken";
+import cors from "cors";
+
+import userRouter from "./routes/userRouter.js";
 import productRouter from "./routes/productRouter.js";
+import orderRouter from "./routes/orderRouter.js";
 
 dotenv.config();
 
 const app = express();
 
-// Database Connection
-mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => {
-        console.log("Connected to DB");
-    })
-    .catch((error) => {
-        console.log("DB Connection Error:", error);
-    });
 
+// =========================
+// DATABASE CONNECTION
+// =========================
+
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log("✅ Connected to MongoDB");
+  })
+  .catch((error) => {
+    console.log(
+      "❌ MongoDB Connection Error:",
+      error
+    );
+  });
+
+
+// =========================
+// MIDDLEWARE
+// =========================
+
+// JSON Parser
 app.use(express.json());
 
-// Auth Middleware
+
+// CORS FIX
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+    credentials: true,
+  })
+);
+
+
+// =========================
+// AUTH MIDDLEWARE
+// =========================
+
 app.use((req, res, next) => {
-    const authorizationHeader = req.header("Authorization");
 
-    if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-        const token = authorizationHeader.replace("Bearer ", "");
+  const authorizationHeader =
+    req.header("Authorization");
 
-        // token verify
-        jwt.verify(token, process.env.SECRET_KEY, (error, content) => {
-            if (error) {
-                // Token invalid or expired
-                return res.status(401).json({
-                    message: "Invalid or expired token",
-                });
-            } else {
-                // Token valid, content contains the payload
-                req.user = content;
-                next();
-            }
-        });
-    } else {
-        // Token not provided
-        next();
-    }
+  if (
+    authorizationHeader != null &&
+    authorizationHeader.startsWith(
+      "Bearer "
+    )
+  ) {
+
+    const token =
+      authorizationHeader.replace(
+        "Bearer ",
+        ""
+      );
+
+    jwt.verify(
+      token,
+      process.env.SECRET_KEY,
+
+      (error, content) => {
+
+        if (error) {
+
+          return res.status(401).json({
+            message:
+              "Invalid or expired token",
+          });
+
+        } else {
+
+          req.user = content;
+
+          next();
+        }
+      }
+    );
+
+  } else {
+
+    next();
+  }
 });
 
+
+// =========================
+// ROUTES
+// =========================
+
 app.use("/users", userRouter);
+
 app.use("/products", productRouter);
 
-app.listen(3000, () => {
-    console.log("Server is running on port 3000");
+app.use("/orders", orderRouter);
+
+
+// =========================
+// TEST ROUTE
+// =========================
+
+app.get("/", (req, res) => {
+  res.json({
+    message:
+      "CAMX.lk Backend Running 🚀",
+  });
+});
+
+
+// =========================
+// SERVER
+// =========================
+
+const port =
+  Number(process.env.PORT) || 5000;
+
+app.listen(port, () => {
+
+  console.log(
+    `🚀 Server running on port ${port}`
+  );
 });

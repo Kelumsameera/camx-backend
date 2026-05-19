@@ -1,153 +1,362 @@
 import Product from "../models/Product.js";
-import { isAdmin } from "./userController.js";
-export function createProduct(req, res) {
 
-    if(!isAdmin(req)) {
-        return res.status(403).json({
-            message: "Forbidden: Admins only",
-        });
-    }
+import { isAdmin }
+from "./userController.js";
 
-    if (req.user == null) {
-        return res.status(401).json({
-            message: "Unauthorized",
-        });
-    }
-    if (req.user.role !== "admin") {
-        return res.status(403).json({
-            message: "Forbidden: Admins only",
-        });
-    }
-    const product = new Product(req.body)
-    product.save().then(
-        () => {
-            res.status(201).json({
-                message: "Product created successfully",
-            });
-        }
-        
-    ).catch((error) => {
-        res.status(500).json({
-            message: "Error creating product",
-            error: error.message,
-        });
+// =========================
+// CREATE PRODUCT
+// =========================
+
+export function createProduct(
+  req,
+  res
+) {
+
+  if (!isAdmin(req)) {
+
+    return res.status(403).json({
+      message:
+        "Forbidden: Admins only",
+    });
+  }
+
+  if (req.user == null) {
+
+    return res.status(401).json({
+      message: "Unauthorized",
+    });
+  }
+
+  const body = req.body;
+
+  const product =
+    new Product({
+
+      // AUTO PRODUCT ID
+      productId:
+        body.productId ||
+        `prod-${Date.now()}`,
+
+      name:
+        body.name,
+
+      altName:
+        body.altName || [],
+
+      description:
+        body.description,
+
+      // DYNAMIC SPECIFICATIONS
+      specifications:
+        body.specifications || {},
+
+      price:
+        body.price,
+
+      labelPrice:
+        body.labelPrice ??
+        body.price,
+
+      images:
+        body.images || [
+          "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80",
+        ],
+
+      category:
+        body.category ||
+        "Uncategorized",
+
+      brand:
+        body.brand ||
+        "CAMX",
+
+      stock:
+        body.stock ??
+        body.inventory ??
+        0,
+
+      isAvailable:
+        body.isAvailable ??
+        true,
+    });
+
+  product
+    .save()
+
+    .then(() => {
+
+      res.status(201).json({
+        message:
+          "Product created successfully",
+
+        product,
+      });
+    })
+
+    .catch((error) => {
+
+      res.status(500).json({
+        message:
+          "Error creating product",
+
+        error:
+          error.message,
+      });
     });
 }
 
-export function getAllProducts(req, res) {
-    if(isAdmin(req)) {
-        Product.find().then(
-            (products) => {
-                res.status(200).json(products);
-            }
-        ).catch((error) => {
-            res.status(500).json({
-                message: "Error fetching products",
-                error: error.message,
-            });
-        });
-    }
-    else {
-        Product.find({ isAvailable: true }).then(
-            (products) => {
-                res.status(200).json(products);
-            }
-        ).catch((error) => {
-            res.status(500).json({
-                message: "Error fetching products",
-                error: error.message,
-            });
-        });
-    }
-}
+// =========================
+// GET ALL PRODUCTS
+// =========================
 
-export function deleteProduct(req, res) {
-    if(!isAdmin(req)) {
-        return res.status(403).json({
-            message: "Forbidden: Admins only",
-        });
-    } 
-    const productId = req.params.productId;
-    Product.findOneAndDelete({ productId: productId }).then(
-        (deletedProduct) => {
-            if (deletedProduct) {
-                res.status(200).json({
-                    message: "Product deleted successfully",
-                });
-            } else {
-                res.status(404).json({
-                    message: "Product not found",
-                });
-            }
-        }
-    ).catch((error) => {
-        res.status(500).json({
-            message: "Error deleting product",
-            error: error.message,
-        });
-    });
-}
+export function getAllProducts(
+  req,
+  res
+) {
 
-export async function updateProduct(req, res) {
-    try {
-        // Admin check
-        if (!isAdmin(req)) {
-            return res.status(403).json({
-                message: "Forbidden: Admins only",
-            });
-        }
+  if (isAdmin(req)) {
 
-        const productId = req.params.productId;
+    Product.find()
 
-        // Update product
-        const updatedProduct = await Product.findOneAndUpdate(
-            { productId: productId },
-            req.body,
-            {
-                new: true, // return updated document
-                runValidators: true,
-            }
+      .then((products) => {
+
+        res.status(200).json(
+          products
         );
+      })
 
-        // Product not found
-        if (!updatedProduct) {
-            return res.status(404).json({
-                message: "Product not found",
-            });
-        }
+      .catch((error) => {
 
-        // Success response
-        return res.status(200).json({
-            message: "Product updated successfully",
-            product: updatedProduct,
+        res.status(500).json({
+          message:
+            "Error fetching products",
+
+          error:
+            error.message,
         });
+      });
 
-    } catch (error) {
-        return res.status(500).json({
-            message: "Error updating product",
-            error: error.message,
+  } else {
+
+    Product.find({
+      isAvailable: true,
+    })
+
+      .then((products) => {
+
+        res.status(200).json(
+          products
+        );
+      })
+
+      .catch((error) => {
+
+        res.status(500).json({
+          message:
+            "Error fetching products",
+
+          error:
+            error.message,
         });
-    }
+      });
+  }
 }
-export function getProductById(req, res) {
-    const productId = req.params.productId;
 
-    Product.findOne({ productId: productId })
-        .then((product) => {
+// =========================
+// GET PRODUCT BY ID
+// =========================
 
-            if (product == null) {
-                return res.status(404).json({
-                    message: "Product not found",
-                });
-            }
+export function getProductById(
+  req,
+  res
+) {
 
-            return res.status(200).json(product);
+  const productId =
+    req.params.productId;
 
-        })
-        .catch((error) => {
-            return res.status(500).json({
-                message: "Error fetching product",
-                error: error.message,
-            });
+  Product.findOne({
+    productId:
+      productId,
+  })
+
+    .then((product) => {
+
+      if (
+        product == null
+      ) {
+
+        return res.status(404).json({
+          message:
+            "Product not found",
         });
+      }
+
+      return res.status(200).json(
+        product
+      );
+    })
+
+    .catch((error) => {
+
+      return res.status(500).json({
+        message:
+          "Error fetching product",
+
+        error:
+          error.message,
+      });
+    });
+}
+
+// =========================
+// UPDATE PRODUCT
+// =========================
+
+export async function updateProduct(
+  req,
+  res
+) {
+
+  try {
+
+    if (!isAdmin(req)) {
+
+      return res.status(403).json({
+        message:
+          "Forbidden: Admins only",
+      });
+    }
+
+    const productId =
+      req.params.productId;
+
+    // INVENTORY -> STOCK
+    if (
+      req.body.inventory !=
+      null
+    ) {
+
+      req.body.stock =
+        req.body.inventory;
+
+      delete req.body.inventory;
+    }
+
+    // LABEL PRICE
+    if (
+      req.body.price !=
+        null &&
+      req.body.labelPrice ==
+        null
+    ) {
+
+      req.body.labelPrice =
+        req.body.price;
+    }
+
+    // UPDATE
+    const updatedProduct =
+      await Product.findOneAndUpdate(
+        {
+          productId:
+            productId,
+        },
+
+        req.body,
+
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    if (
+      !updatedProduct
+    ) {
+
+      return res.status(404).json({
+        message:
+          "Product not found",
+      });
+    }
+
+    return res.status(200).json({
+      message:
+        "Product updated successfully",
+
+      product:
+        updatedProduct,
+    });
+
+  } catch (error) {
+
+    return res.status(500).json({
+      message:
+        "Error updating product",
+
+      error:
+        error.message,
+    });
+  }
+}
+
+// =========================
+// DELETE PRODUCT
+// =========================
+
+export function deleteProduct(
+  req,
+  res
+) {
+
+  if (!isAdmin(req)) {
+
+    return res.status(403).json({
+      message:
+        "Forbidden: Admins only",
+    });
+  }
+
+  const productId =
+    req.params.productId;
+
+  Product.findOneAndDelete({
+    productId:
+      productId,
+  })
+
+    .then(
+      (
+        deletedProduct
+      ) => {
+
+        if (
+          deletedProduct
+        ) {
+
+          res.status(200).json({
+            message:
+              "Product deleted successfully",
+          });
+
+        } else {
+
+          res.status(404).json({
+            message:
+              "Product not found",
+          });
+        }
+      }
+    )
+
+    .catch((error) => {
+
+      res.status(500).json({
+        message:
+          "Error deleting product",
+
+        error:
+          error.message,
+      });
+    });
 }
