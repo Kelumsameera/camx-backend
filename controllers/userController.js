@@ -1,4 +1,4 @@
-import User from "../models/Users.js";
+import User from "../models/users.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import axios from "axios"; // REQUIRED FOR GOOGLE LOGIN
