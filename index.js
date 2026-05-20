@@ -41,7 +41,7 @@ app.use(express.json());
 // CORS FIX
 app.use(
   cors({
-    origin: "https://camx-backend.onrender.com",
+    origin: "*",
     credentials: true,
   })
 );
