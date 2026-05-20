@@ -41,7 +41,7 @@ app.use(express.json());
 // CORS FIX
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: "*",
     credentials: true,
   })
 );
