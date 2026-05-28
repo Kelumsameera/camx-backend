@@ -4,9 +4,13 @@ import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import cors from "cors";
 
+// ROUTES
 import userRouter from "./routes/userRouter.js";
 import productRouter from "./routes/productRouter.js";
 import orderRouter from "./routes/orderRouter.js";
+import reviewRouter from "./routes/reviewRouter.js";
+import analyticsRouter from "./routes/analyticsRoutes.js";
+import contactRouter from "./routes/contactRouter.js";
 
 dotenv.config();
 
@@ -34,11 +38,11 @@ mongoose
 // MIDDLEWARE
 // =========================
 
-// JSON Parser
+// JSON PARSER
 app.use(express.json());
 
 
-// CORS FIX
+// CORS
 app.use(
   cors({
     origin: "*",
@@ -57,7 +61,7 @@ app.use((req, res, next) => {
     req.header("Authorization");
 
   if (
-    authorizationHeader != null &&
+    authorizationHeader &&
     authorizationHeader.startsWith(
       "Bearer "
     )
@@ -99,14 +103,42 @@ app.use((req, res, next) => {
 
 
 // =========================
-// ROUTES
+// API ROUTES
 // =========================
 
-app.use("/users", userRouter);
+// USERS
+app.use(
+  "/api/users",
+  userRouter
+);
 
-app.use("/products", productRouter);
+// PRODUCTS
+app.use(
+  "/api/products",
+  productRouter
+);
 
-app.use("/orders", orderRouter);
+// ORDERS
+app.use(
+  "/api/orders",
+  orderRouter
+);
+
+// REVIEWS
+app.use(
+  "/api/reviews",
+  reviewRouter
+);
+
+app.use(
+  "/api/analytics",
+  analyticsRouter
+);
+
+app.use(
+  "/api/contacts",
+  contactRouter
+);
 
 
 // =========================
@@ -114,10 +146,27 @@ app.use("/orders", orderRouter);
 // =========================
 
 app.get("/", (req, res) => {
+
   res.json({
+    success: true,
     message:
       "CAMX.lk Backend Running 🚀",
   });
+
+});
+
+
+// =========================
+// 404 HANDLER
+// =========================
+
+app.use((req, res) => {
+
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
+
 });
 
 
@@ -126,11 +175,12 @@ app.get("/", (req, res) => {
 // =========================
 
 const port =
-  Number(process.env.PORT) || 5000;
+  process.env.PORT || 5000;
 
 app.listen(port, () => {
 
   console.log(
     `🚀 Server running on port ${port}`
   );
+
 });

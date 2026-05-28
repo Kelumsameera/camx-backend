@@ -1,10 +1,22 @@
 import mongoose from "mongoose";
-import Review from "../models/reviews.js";
-import { isAdmin } from "./userController.js";
+import Review from "../models/Review.js";
+
+// ==============================
+// HELPER FUNCTIONS
+// ==============================
+
+function isAdmin(req) {
+  return req.user?.role === "admin";
+}
+
+function isOwner(review, req) {
+  return review.userId.toString() === req.user?._id?.toString();
+}
 
 // ==============================
 // CREATE REVIEW
 // ==============================
+
 export async function createReview(req, res) {
   try {
     const {
@@ -13,18 +25,18 @@ export async function createReview(req, res) {
       name,
       rating,
       title,
-      content,
+      comment,
       verified,
       images,
     } = req.body;
 
-    // Validation
+    // VALIDATION
     if (
       !productId ||
       !userId ||
       !rating ||
       !title ||
-      !content
+      !comment
     ) {
       return res.status(400).json({
         success: false,
@@ -32,7 +44,18 @@ export async function createReview(req, res) {
       });
     }
 
-    // Rating validation
+    // VALID OBJECT IDS
+    if (
+      !mongoose.Types.ObjectId.isValid(productId) ||
+      !mongoose.Types.ObjectId.isValid(userId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product or user ID",
+      });
+    }
+
+    // RATING VALIDATION
     if (rating < 1 || rating > 5) {
       return res.status(400).json({
         success: false,
@@ -40,7 +63,7 @@ export async function createReview(req, res) {
       });
     }
 
-    // Prevent duplicate reviews
+    // PREVENT DUPLICATE REVIEWS
     const existingReview = await Review.findOne({
       productId,
       userId,
@@ -54,14 +77,14 @@ export async function createReview(req, res) {
       });
     }
 
-    // Create review
+    // CREATE REVIEW
     const review = new Review({
       productId,
       userId,
       name: name || "Anonymous",
       rating,
       title,
-      content,
+      comment,
       verified: verified ?? false,
       images: Array.isArray(images) ? images : [],
     });
@@ -85,6 +108,7 @@ export async function createReview(req, res) {
 // ==============================
 // GET ALL REVIEWS FOR PRODUCT
 // ==============================
+
 export async function getAllReviews(req, res) {
   try {
     const { productId } = req.params;
@@ -116,8 +140,9 @@ export async function getAllReviews(req, res) {
       productId,
       hidden: false,
       deleted: false,
+      status: "approved",
     })
-      .populate("userId", "name email")
+      .populate("userId", "name")
       .sort(sortOption)
       .skip((page - 1) * limit)
       .limit(limit);
@@ -126,6 +151,7 @@ export async function getAllReviews(req, res) {
       productId,
       hidden: false,
       deleted: false,
+      status: "approved",
     });
 
     res.json({
@@ -147,12 +173,20 @@ export async function getAllReviews(req, res) {
 // ==============================
 // GET REVIEW BY ID
 // ==============================
+
 export async function getReviewById(req, res) {
   try {
     const { reviewId } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(reviewId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid review ID",
+      });
+    }
+
     const review = await Review.findById(reviewId)
-      .populate("userId", "name email")
+      .populate("userId", "name")
       .populate("productId", "name");
 
     if (!review || review.deleted) {
@@ -178,6 +212,7 @@ export async function getReviewById(req, res) {
 // ==============================
 // VOTE REVIEW
 // ==============================
+
 export async function voteReview(req, res) {
   try {
     const { reviewId } = req.params;
@@ -224,10 +259,11 @@ export async function voteReview(req, res) {
 // ==============================
 // UPDATE USER REVIEW
 // ==============================
+
 export async function updateReview(req, res) {
   try {
     const { reviewId } = req.params;
-    const { title, content, rating, images } = req.body;
+    const { title, comment, rating, images } = req.body;
 
     const review = await Review.findById(reviewId);
 
@@ -238,9 +274,18 @@ export async function updateReview(req, res) {
       });
     }
 
+    // OWNER CHECK
+    if (!isOwner(review, req)) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
     if (title !== undefined) review.title = title;
-    if (content !== undefined) review.content = content;
+    if (comment !== undefined) review.comment = comment;
     if (rating !== undefined) review.rating = rating;
+
     if (images !== undefined) {
       review.images = Array.isArray(images) ? images : [];
     }
@@ -264,6 +309,7 @@ export async function updateReview(req, res) {
 // ==============================
 // DELETE USER REVIEW
 // ==============================
+
 export async function deleteReview(req, res) {
   try {
     const { reviewId } = req.params;
@@ -274,6 +320,14 @@ export async function deleteReview(req, res) {
       return res.status(404).json({
         success: false,
         message: "Review not found",
+      });
+    }
+
+    // OWNER CHECK
+    if (!isOwner(review, req)) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized",
       });
     }
 
@@ -297,6 +351,7 @@ export async function deleteReview(req, res) {
 // ==============================
 // ADMIN GET ALL REVIEWS
 // ==============================
+
 export async function adminGetAllReviews(req, res) {
   if (!isAdmin(req)) {
     return res.status(403).json({
@@ -307,7 +362,7 @@ export async function adminGetAllReviews(req, res) {
 
   try {
     const reviews = await Review.find()
-      .populate("userId", "name email")
+      .populate("userId", "name")
       .populate("productId", "name")
       .sort({ createdAt: -1 });
 
@@ -327,6 +382,7 @@ export async function adminGetAllReviews(req, res) {
 // ==============================
 // ADMIN UPDATE REVIEW
 // ==============================
+
 export async function adminUpdateReview(req, res) {
   if (!isAdmin(req)) {
     return res.status(403).json({
@@ -337,7 +393,16 @@ export async function adminUpdateReview(req, res) {
 
   try {
     const { reviewId } = req.params;
-    const { title, content, rating } = req.body;
+
+    const {
+      title,
+      comment,
+      rating,
+      hidden,
+      deleted,
+      status,
+      adminReply,
+    } = req.body;
 
     const review = await Review.findById(reviewId);
 
@@ -349,8 +414,12 @@ export async function adminUpdateReview(req, res) {
     }
 
     if (title !== undefined) review.title = title;
-    if (content !== undefined) review.content = content;
+    if (comment !== undefined) review.comment = comment;
     if (rating !== undefined) review.rating = rating;
+    if (hidden !== undefined) review.hidden = hidden;
+    if (deleted !== undefined) review.deleted = deleted;
+    if (status !== undefined) review.status = status;
+    if (adminReply !== undefined) review.adminReply = adminReply;
 
     await review.save();
 
@@ -369,50 +438,9 @@ export async function adminUpdateReview(req, res) {
 }
 
 // ==============================
-// ADMIN TOGGLE HIDDEN
-// ==============================
-export async function adminToggleHidden(req, res) {
-  if (!isAdmin(req)) {
-    return res.status(403).json({
-      success: false,
-      message: "Access denied",
-    });
-  }
-
-  try {
-    const { reviewId } = req.params;
-    const { hidden } = req.body;
-
-    const review = await Review.findById(reviewId);
-
-    if (!review) {
-      return res.status(404).json({
-        success: false,
-        message: "Review not found",
-      });
-    }
-
-    review.hidden = Boolean(hidden);
-
-    await review.save();
-
-    res.json({
-      success: true,
-      message: hidden ? "Review hidden" : "Review unhidden",
-      review,
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: "Error updating hidden state",
-      error: err.message,
-    });
-  }
-}
-
-// ==============================
 // ADMIN DELETE REVIEW
 // ==============================
+
 export async function adminDeleteReview(req, res) {
   if (!isAdmin(req)) {
     return res.status(403).json({
@@ -454,6 +482,7 @@ export async function adminDeleteReview(req, res) {
 // ==============================
 // ADMIN RESTORE REVIEW
 // ==============================
+
 export async function adminRestoreReview(req, res) {
   if (!isAdmin(req)) {
     return res.status(403).json({
@@ -495,6 +524,7 @@ export async function adminRestoreReview(req, res) {
 // ==============================
 // GET PRODUCT RATING SUMMARY
 // ==============================
+
 export async function getProductRating(req, res) {
   try {
     const { productId } = req.params;
@@ -505,14 +535,21 @@ export async function getProductRating(req, res) {
           productId: new mongoose.Types.ObjectId(productId),
           hidden: false,
           deleted: false,
+          status: "approved",
         },
       },
       {
         $group: {
           _id: "$productId",
-          averageRating: { $avg: "$rating" },
-          reviewCount: { $sum: 1 },
-          helpfulCount: { $sum: "$helpful" },
+          averageRating: {
+            $avg: "$rating",
+          },
+          reviewCount: {
+            $sum: 1,
+          },
+          helpfulCount: {
+            $sum: "$helpful",
+          },
         },
       },
     ]);
@@ -528,7 +565,9 @@ export async function getProductRating(req, res) {
 
     res.json({
       success: true,
-      averageRating: Number(result[0].averageRating.toFixed(1)),
+      averageRating: Number(
+        result[0].averageRating.toFixed(1)
+      ),
       reviewCount: result[0].reviewCount,
       helpfulCount: result[0].helpfulCount,
     });

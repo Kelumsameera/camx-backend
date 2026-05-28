@@ -7,102 +7,155 @@ from "./userController.js";
 // CREATE PRODUCT
 // =========================
 
-export function createProduct(
+export async function createProduct(
   req,
   res
 ) {
 
-  if (!isAdmin(req)) {
+  try {
 
-    return res.status(403).json({
+    // =========================
+    // ADMIN CHECK
+    // =========================
+
+    if (!isAdmin(req)) {
+
+      return res.status(403).json({
+        message:
+          "Forbidden: Admins only",
+      });
+    }
+
+    // =========================
+    // USER CHECK
+    // =========================
+
+    if (req.user == null) {
+
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
+
+    const body = req.body;
+
+    // =========================
+    // CATEGORY CODE
+    // =========================
+
+    const categoryCode =
+
+      body.category
+        ?.toUpperCase()
+
+        .replace(
+          /[^A-Z0-9]/g,
+          ""
+        )
+
+        .slice(0, 5)
+
+      || "GEN";
+
+    // =========================
+    // RANDOM NUMBER
+    // =========================
+
+    const randomNumber =
+
+      Math.floor(
+        1000 +
+        Math.random() * 9000
+      );
+
+    // =========================
+    // GENERATED SKU
+    // =========================
+
+    const generatedSKU =
+
+      `CAM-${categoryCode}-${randomNumber}`;
+
+    // =========================
+    // PRODUCT
+    // =========================
+
+    const product =
+      new Product({
+
+        // AUTO SKU
+        productId:
+          body.productId ||
+          generatedSKU,
+
+        name:
+          body.name,
+
+        altName:
+          body.altName || [],
+
+        description:
+          body.description,
+
+        // DYNAMIC SPECIFICATIONS
+        specifications:
+          body.specifications || {},
+
+        price:
+          body.price,
+
+        labelPrice:
+          body.labelPrice ??
+          body.price,
+
+        images:
+          body.images || [
+            "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80",
+          ],
+
+        category:
+          body.category ||
+          "Uncategorized",
+
+        brand:
+          body.brand ||
+          "CAMX",
+
+        stock:
+          body.stock ??
+          body.inventory ??
+          0,
+
+        isAvailable:
+          body.isAvailable ??
+          true,
+      });
+
+    // =========================
+    // SAVE
+    // =========================
+
+    await product.save();
+
+    return res.status(201).json({
+
       message:
-        "Forbidden: Admins only",
+        "Product created successfully",
+
+      product,
+    });
+
+  } catch (error) {
+
+    return res.status(500).json({
+
+      message:
+        "Error creating product",
+
+      error:
+        error.message,
     });
   }
-
-  if (req.user == null) {
-
-    return res.status(401).json({
-      message: "Unauthorized",
-    });
-  }
-
-  const body = req.body;
-
-  const product =
-    new Product({
-
-      // AUTO PRODUCT ID
-      productId:
-        body.productId ||
-        `prod-${Date.now()}`,
-
-      name:
-        body.name,
-
-      altName:
-        body.altName || [],
-
-      description:
-        body.description,
-
-      // DYNAMIC SPECIFICATIONS
-      specifications:
-        body.specifications || {},
-
-      price:
-        body.price,
-
-      labelPrice:
-        body.labelPrice ??
-        body.price,
-
-      images:
-        body.images || [
-          "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80",
-        ],
-
-      category:
-        body.category ||
-        "Uncategorized",
-
-      brand:
-        body.brand ||
-        "CAMX",
-
-      stock:
-        body.stock ??
-        body.inventory ??
-        0,
-
-      isAvailable:
-        body.isAvailable ??
-        true,
-    });
-
-  product
-    .save()
-
-    .then(() => {
-
-      res.status(201).json({
-        message:
-          "Product created successfully",
-
-        product,
-      });
-    })
-
-    .catch((error) => {
-
-      res.status(500).json({
-        message:
-          "Error creating product",
-
-        error:
-          error.message,
-      });
-    });
 }
 
 // =========================
@@ -281,6 +334,7 @@ export async function updateProduct(
     }
 
     return res.status(200).json({
+
       message:
         "Product updated successfully",
 
@@ -291,6 +345,7 @@ export async function updateProduct(
   } catch (error) {
 
     return res.status(500).json({
+
       message:
         "Error updating product",
 
@@ -359,4 +414,22 @@ export function deleteProduct(
           error.message,
       });
     });
+}
+
+// =========================
+// GET TOP SELLING PRODUCTS
+// =========================
+export async function getTopSellingProducts(req, res) {
+  try {
+    // Orders වල items දත්ත විශ්ලේෂණය කර වැඩිම විකුණුම් ඇති නිෂ්පාදන ලබා ගන්න
+    const topProducts = await Order.aggregate([
+      { $unwind: "$items" },
+      { $group: { _id: "$items.productId", totalSold: { $sum: "$items.quantity" } } },
+      { $sort: { totalSold: -1 } },
+      { $limit: 5 }
+    ]);
+    res.json(topProducts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 }

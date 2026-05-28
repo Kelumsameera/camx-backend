@@ -9,7 +9,6 @@ import {
   deleteReview,
   adminGetAllReviews,
   adminUpdateReview,
-  adminToggleHidden,
   adminDeleteReview,
   adminRestoreReview,
   getProductRating,
@@ -18,17 +17,21 @@ import {
 const reviewRouter = express.Router();
 
 // =====================================
-// USER ROUTES
+// PRODUCT REVIEW ROUTES
 // =====================================
-
-// Create Review
-reviewRouter.post("/", createReview);
 
 // Get all reviews for a product
 reviewRouter.get("/product/:productId", getAllReviews);
 
-// Get single review
-reviewRouter.get("/:reviewId", getReviewById);
+// Product rating summary
+reviewRouter.get("/rating/:productId", getProductRating);
+
+// =====================================
+// USER REVIEW ROUTES
+// =====================================
+
+// Create review
+reviewRouter.post("/", createReview);
 
 // Vote helpful / not helpful
 reviewRouter.patch("/vote/:reviewId", voteReview);
@@ -39,11 +42,8 @@ reviewRouter.put("/:reviewId", updateReview);
 // Delete own review
 reviewRouter.delete("/:reviewId", deleteReview);
 
-// Product rating summary
-reviewRouter.get("/rating/:productId", getProductRating);
-
 // =====================================
-// ADMIN ROUTES
+// ADMIN REVIEW ROUTES
 // =====================================
 
 // Get all reviews
@@ -52,13 +52,20 @@ reviewRouter.get("/admin/all", adminGetAllReviews);
 // Admin update review
 reviewRouter.put("/admin/:reviewId", adminUpdateReview);
 
-// Hide / Unhide review
-reviewRouter.patch("/admin/hide/:reviewId", adminToggleHidden);
-
 // Soft delete review
 reviewRouter.delete("/admin/:reviewId", adminDeleteReview);
 
 // Restore deleted review
-reviewRouter.patch("/admin/restore/:reviewId", adminRestoreReview);
+reviewRouter.patch(
+  "/admin/restore/:reviewId",
+  adminRestoreReview
+);
+
+// =====================================
+// SINGLE REVIEW ROUTE
+// =====================================
+
+// Get single review
+reviewRouter.get("/:reviewId", getReviewById);
 
 export default reviewRouter;

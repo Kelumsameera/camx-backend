@@ -1,16 +1,57 @@
 import express from "express";
-import { 
-  createUser, 
-  loginUser, 
-  googleLogin // 1. Controller එකෙන් googleLogin ශ්‍රිතය මෙතැනට import කරන්න
+
+import {
+
+  createUser,
+
+  loginUser,
+
+  googleLogin,
+
+  getAllUsers,
+
+  updateUserStatus,
+
 } from "../controllers/userController.js";
 
-const userRouter = express.Router();
+const userRouter =
+  express.Router();
 
-userRouter.post("/", createUser);
-userRouter.post("/login", loginUser);
+// ======================================
+// AUTH
+// ======================================
 
-// 2. Google Login සඳහා වන නව Backend Route එක මෙතැනින් එකතු කරන්න
-userRouter.post("/google-login", googleLogin);
+userRouter.post(
+  "/",
+  createUser
+);
+
+userRouter.post(
+  "/login",
+  loginUser
+);
+
+userRouter.post(
+  "/google-login",
+  googleLogin
+);
+
+// ======================================
+// ADMIN
+// ======================================
+
+userRouter.get(
+  "/all",
+  getAllUsers
+);
+
+userRouter.put(
+  "/status/:email",
+  updateUserStatus
+);
+
+// ======================================
+// EXPORT
+// ======================================
 
 export default userRouter;

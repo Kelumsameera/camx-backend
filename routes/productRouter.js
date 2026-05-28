@@ -1,4 +1,5 @@
 import express from "express";
+
 import {
   createProduct,
   deleteProduct,
@@ -9,14 +10,53 @@ import {
 
 const productRouter = express.Router();
 
-productRouter.get("/", getAllProducts);
+// =====================================
+// GET ALL PRODUCTS
+// =====================================
 
-productRouter.post("/", createProduct);
+productRouter.get(
+  "/",
+  getAllProducts
+);
 
-productRouter.get("/:productId", getProductById);
+// =====================================
+// CREATE PRODUCT
+// =====================================
 
-productRouter.delete("/:productId", deleteProduct);
+productRouter.post(
+  "/",
+  createProduct
+);
 
-productRouter.put("/:productId", updateProduct);
+// =====================================
+// GET SINGLE PRODUCT
+// =====================================
+
+productRouter.get(
+  "/:productId",
+  getProductById
+);
+
+// =====================================
+// UPDATE PRODUCT
+// =====================================
+
+productRouter.put(
+  "/:productId",
+  updateProduct
+);
+
+// =====================================
+// DELETE PRODUCT
+// =====================================
+
+productRouter.delete(
+  "/:productId",
+  deleteProduct
+);
+
+// =====================================
+// EXPORT
+// =====================================
 
 export default productRouter;
