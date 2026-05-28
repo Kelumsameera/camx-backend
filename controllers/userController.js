@@ -6,7 +6,9 @@ import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import Otp from "../models/Otp.js";
 dotenv.config();
-
+// =========================
+// EMAIL TRANSPORTER
+// =========================
 const transporter = nodemailer.createTransport({
   service: "gmail",
   host: "smtp.gmail.com",
