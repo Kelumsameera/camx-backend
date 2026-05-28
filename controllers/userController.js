@@ -1,23 +1,22 @@
-import User from "../models/users.js";
+import User from "../models/Users.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import axios from "axios"; // REQUIRED FOR GOOGLE LOGIN
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
-import Otp from "../models/otp.js";
+import Otp from "../models/Otp.js";
 dotenv.config();
 
 const transporter = nodemailer.createTransport({
-	service: "gmail",
-	host: "smtp.gmail.com",
-	port: 587,
-	secure: false,
-	auth: {
-		user: process.env.EMAIL,
-		pass: process.env.GMAIL_APP_PASSWORD,
-	},
+  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.EMAIL,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
 });
-
 
 export function createUser(req, res) {
   const data = req.body;
@@ -38,7 +37,6 @@ export function createUser(req, res) {
     });
   });
 }
-
 
 export function loginUser(req, res) {
   const email = req.body.email;
@@ -89,7 +87,6 @@ export function loginUser(req, res) {
   });
 }
 
-
 export function isAdmin(req) {
   if (!req.user) return false;
   if (req.user.role !== "admin") return false;
@@ -118,7 +115,7 @@ export async function googleLogin(req, res) {
       "https://www.googleapis.com/oauth2/v3/userinfo",
       {
         headers: { Authorization: `Bearer ${req.body.token}` },
-      }
+      },
     );
 
     const googleData = response.data;
@@ -178,67 +175,67 @@ export async function googleLogin(req, res) {
   }
 }
 export async function sendOtp(req, res) {
-	try {
-	const email = req.params.email;
-	const user = await User.findOne({ email: email });
-	if (user == null) {
-		res.status(404).json({ message: "User not found" });
-		return ;
-	}
-	await Otp.deleteMany({
-		 email: email 
-		});
+  try {
+    const email = req.params.email;
+    const user = await User.findOne({ email: email });
+    if (user == null) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+    await Otp.deleteMany({
+      email: email,
+    });
 
-	// generate random 6-digit OTP
-	 const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-	const newOtp = new Otp({
-		email: email,
-		otp: otpCode,
-	});
-	await newOtp.save();
-	const message ={
-		from: process.env.EMAIL,
-		to: email,
-		subject: "Your OTP Code",
-		text: `Your OTP code is: ${otpCode}` // In real application, generate a random OTP
-	};
-	transporter.sendMail(message, (err, info) => {
-		if (err) {
-			console.error("Error sending email:", err);
-			res.status(500).json({ message: "Failed to send OTP" });
-		} else {
-			console.log("Email sent:", info.response);
-			res.json({ message: "OTP sent successfully" });
-		}
-	});
-	} catch (error) {
-		console.error("Error in sendOtp:", error);
-		res.status(500).json({ message: "Internal server error" });
-	}
+    // generate random 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const newOtp = new Otp({
+      email: email,
+      otp: otpCode,
+    });
+    await newOtp.save();
+    const message = {
+      from: process.env.EMAIL,
+      to: email,
+      subject: "Your OTP Code",
+      text: `Your OTP code is: ${otpCode}`, // In real application, generate a random OTP
+    };
+    transporter.sendMail(message, (err, info) => {
+      if (err) {
+        console.error("Error sending email:", err);
+        res.status(500).json({ message: "Failed to send OTP" });
+      } else {
+        console.log("Email sent:", info.response);
+        res.json({ message: "OTP sent successfully" });
+      }
+    });
+  } catch (error) {
+    console.error("Error in sendOtp:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
   // Implementation for sending OTP
 }
 export async function validateOTPAndUpdatePassword(req, res) {
-	try {
-		const email = req.body.email;
-		const otp = req.body.otp;
-		const newPassword = req.body.newPassword;
+  try {
+    const email = req.body.email;
+    const otp = req.body.otp;
+    const newPassword = req.body.newPassword;
 
-		const otpRecord = await Otp.findOne({ email: email, otp: otp });
-		if (otpRecord == null) {
-			res.status(400).json({ message: "Invalid OTP" });
-			return ;
-		}
-		const hashedPassword = bcrypt.hashSync(newPassword, 10);
-		await User.updateOne(
-			{ email: email },
-			{ $set: { password: hashedPassword , isEmailVerified: true } }
-		);
-		await Otp.deleteMany({ email: email });
-		res.json({ message: "Password updated successfully" });
-	} catch (error) {
-		console.error("Error in validateOTPAndUpdatePassword:", error);
-		res.status(500).json({ message: "Internal server error" });
-	} 
+    const otpRecord = await Otp.findOne({ email: email, otp: otp });
+    if (otpRecord == null) {
+      res.status(400).json({ message: "Invalid OTP" });
+      return;
+    }
+    const hashedPassword = bcrypt.hashSync(newPassword, 10);
+    await User.updateOne(
+      { email: email },
+      { $set: { password: hashedPassword, isEmailVerified: true } },
+    );
+    await Otp.deleteMany({ email: email });
+    res.json({ message: "Password updated successfully" });
+  } catch (error) {
+    console.error("Error in validateOTPAndUpdatePassword:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
 }
 
 export async function getAllUsers(req, res) {
@@ -276,10 +273,7 @@ export async function updateUserStatus(req, res) {
   }
 
   try {
-    await User.updateOne(
-      { email: email },
-      { $set: { isBlocked: isBlocked } }
-    );
+    await User.updateOne({ email: email }, { $set: { isBlocked: isBlocked } });
 
     res.json({
       message: "User status updated successfully",

@@ -1,6 +1,6 @@
-import Order from "../models/order.js";
+import Order from "../models/Order.js";
 
-import Product from "../models/product.js";
+import Product from "../models/Product.js";
 
 import { isAdmin } from "./userController.js";
 
@@ -8,37 +8,21 @@ import { isAdmin } from "./userController.js";
 // CHECKOUT ORDER
 // ======================================
 
-export async function checkoutOrder(
-  req,
-  res
-) {
-
-  const items =
-    req.body.items;
+export async function checkoutOrder(req, res) {
+  const items = req.body.items;
 
   // ======================================
   // VALIDATION
   // ======================================
 
-  if (
-    !Array.isArray(
-      items
-    ) ||
-    items.length === 0
-  ) {
-
-    return res
-      .status(400)
-      .json({
-        message:
-          "Cart is empty.",
-      });
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      message: "Cart is empty.",
+    });
   }
 
   try {
-
-    const productUpdates =
-      [];
+    const productUpdates = [];
 
     let total = 0;
 
@@ -47,123 +31,78 @@ export async function checkoutOrder(
     // ======================================
 
     for (const item of items) {
-
-      const product =
-        await Product.findOne({
-          productId:
-            item.productId,
-        });
+      const product = await Product.findOne({
+        productId: item.productId,
+      });
 
       if (!product) {
-
-        return res
-          .status(404)
-          .json({
-            message:
-              `Product ${item.productId} not found.`,
-          });
+        return res.status(404).json({
+          message: `Product ${item.productId} not found.`,
+        });
       }
 
       // STOCK CHECK
-      if (
-        product.stock <
-        item.quantity
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            message:
-              `Insufficient stock for ${product.name}.`,
-          });
+      if (product.stock < item.quantity) {
+        return res.status(400).json({
+          message: `Insufficient stock for ${product.name}.`,
+        });
       }
 
       // UPDATE STOCK
-      product.stock -=
-        item.quantity;
+      product.stock -= item.quantity;
 
-      if (
-        product.stock <= 0
-      ) {
-
-        product.isAvailable =
-          false;
+      if (product.stock <= 0) {
+        product.isAvailable = false;
       }
 
-      productUpdates.push(
-        product.save()
-      );
+      productUpdates.push(product.save());
 
       // CALCULATE TOTAL
-      total +=
-        item.quantity *
-        item.unitPrice;
+      total += item.quantity * item.unitPrice;
     }
 
     // SAVE PRODUCTS
-    await Promise.all(
-      productUpdates
-    );
+    await Promise.all(productUpdates);
 
     // ======================================
     // CREATE ORDER
     // ======================================
 
-    const order =
-      new Order({
+    const order = new Order({
+      orderId: `order-${Date.now()}`,
 
-        orderId:
-          `order-${Date.now()}`,
+      // USER
+      userEmail: req.user?.email || null,
 
-        // USER
-        userEmail:
-          req.user?.email ||
-          null,
+      name: req.body.name,
 
-        name:
-          req.body.name,
+      email: req.body.email,
 
-        email:
-          req.body.email,
+      phone: req.body.phone,
 
-        phone:
-          req.body.phone,
+      address: req.body.address,
 
-        address:
-          req.body.address,
+      city: req.body.city,
 
-        city:
-          req.body.city,
+      district: req.body.district,
 
-        district:
-          req.body.district,
+      notes: req.body.notes || "",
 
-        notes:
-          req.body.notes ||
-          "",
+      paymentMethod: req.body.paymentMethod || "COD",
 
-        paymentMethod:
-          req.body
-            .paymentMethod ||
-          "COD",
+      // PRICES
+      subtotal: req.body.subtotal || 0,
 
-        // PRICES
-        subtotal:
-          req.body
-            .subtotal || 0,
+      shipping: req.body.shipping || 0,
 
-        shipping:
-          req.body
-            .shipping || 0,
+      total,
 
-        total,
+      // ITEMS
+      items,
 
-        // ITEMS
-        items,
-
-        // STATUS
-        status: "paid",
-      });
+      // STATUS
+      status: "paid",
+    });
 
     await order.save();
 
@@ -171,33 +110,19 @@ export async function checkoutOrder(
     // RESPONSE
     // ======================================
 
-    return res
-      .status(201)
-      .json({
+    return res.status(201).json({
+      message: "Order completed successfully.",
 
-        message:
-          "Order completed successfully.",
-
-        order,
-      });
-
+      order,
+    });
   } catch (error) {
+    console.error("CHECKOUT ERROR:", error);
 
-    console.error(
-      "CHECKOUT ERROR:",
-      error
-    );
+    return res.status(500).json({
+      message: "Error completing order.",
 
-    return res
-      .status(500)
-      .json({
-
-        message:
-          "Error completing order.",
-
-        error:
-          error.message,
-      });
+      error: error.message,
+    });
   }
 }
 
@@ -205,30 +130,18 @@ export async function checkoutOrder(
 // GET ORDERS
 // ======================================
 
-export async function getOrders(
-  req,
-  res
-) {
-
+export async function getOrders(req, res) {
   try {
-
     // ======================================
     // ADMIN
     // ======================================
 
-    if (
-      isAdmin(req)
-    ) {
+    if (isAdmin(req)) {
+      const orders = await Order.find().sort({
+        createdAt: -1,
+      });
 
-      const orders =
-        await Order.find()
-          .sort({
-            createdAt: -1,
-          });
-
-      return res
-        .status(200)
-        .json(orders);
+      return res.status(200).json(orders);
     }
 
     // ======================================
@@ -236,44 +149,26 @@ export async function getOrders(
     // ======================================
 
     if (!req.user) {
-
-      return res
-        .status(401)
-        .json({
-          message:
-            "Unauthorized",
-        });
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
     }
 
-    const orders =
-      await Order.find({
-        userEmail:
-          req.user.email,
-      }).sort({
-        createdAt: -1,
-      });
+    const orders = await Order.find({
+      userEmail: req.user.email,
+    }).sort({
+      createdAt: -1,
+    });
 
-    return res
-      .status(200)
-      .json(orders);
-
+    return res.status(200).json(orders);
   } catch (error) {
+    console.error("GET ORDERS ERROR:", error);
 
-    console.error(
-      "GET ORDERS ERROR:",
-      error
-    );
+    return res.status(500).json({
+      message: "Error fetching orders.",
 
-    return res
-      .status(500)
-      .json({
-
-        message:
-          "Error fetching orders.",
-
-        error:
-          error.message,
-      });
+      error: error.message,
+    });
   }
 }
 
@@ -281,70 +176,37 @@ export async function getOrders(
 // GET ORDER BY ID
 // ======================================
 
-export async function getOrderById(
-  req,
-  res
-) {
-
+export async function getOrderById(req, res) {
   try {
-
-    const order =
-      await Order.findOne({
-
-        orderId:
-          req.params.orderId,
-      });
+    const order = await Order.findOne({
+      orderId: req.params.orderId,
+    });
 
     if (!order) {
-
-      return res
-        .status(404)
-        .json({
-
-          message:
-            "Order not found.",
-        });
+      return res.status(404).json({
+        message: "Order not found.",
+      });
     }
 
     // ======================================
     // SECURITY
     // ======================================
 
-    if (
-      !isAdmin(req) &&
-      req.user?.email !==
-        order.userEmail
-    ) {
-
-      return res
-        .status(403)
-        .json({
-          message:
-            "Forbidden",
-        });
+    if (!isAdmin(req) && req.user?.email !== order.userEmail) {
+      return res.status(403).json({
+        message: "Forbidden",
+      });
     }
 
-    return res
-      .status(200)
-      .json(order);
-
+    return res.status(200).json(order);
   } catch (error) {
+    console.error("GET ORDER ERROR:", error);
 
-    console.error(
-      "GET ORDER ERROR:",
-      error
-    );
+    return res.status(500).json({
+      message: "Error fetching order.",
 
-    return res
-      .status(500)
-      .json({
-
-        message:
-          "Error fetching order.",
-
-        error:
-          error.message,
-      });
+      error: error.message,
+    });
   }
 }
 
@@ -352,99 +214,51 @@ export async function getOrderById(
 // SALES ANALYTICS
 // ======================================
 
-export async function getSalesAnalytics(
-  req,
-  res
-) {
-
-  if (
-    !isAdmin(req)
-  ) {
-
-    return res
-      .status(403)
-      .json({
-
-        message:
-          "Forbidden: Admins only.",
-      });
+export async function getSalesAnalytics(req, res) {
+  if (!isAdmin(req)) {
+    return res.status(403).json({
+      message: "Forbidden: Admins only.",
+    });
   }
 
   try {
+    const orders = await Order.find();
 
-    const orders =
-      await Order.find();
+    const totalOrders = orders.length;
 
-    const totalOrders =
-      orders.length;
+    const totalRevenue = orders.reduce(
+      (sum, order) => sum + order.total,
 
-    const totalRevenue =
-      orders.reduce(
-
-        (
-          sum,
-          order
-        ) =>
-          sum +
-          order.total,
-
-        0
-      );
-
-    const totalProductsSold =
-      orders.reduce(
-
-        (
-          sum,
-          order
-        ) =>
-
-          sum +
-
-          order.items.reduce(
-
-            (
-              count,
-              item
-            ) =>
-
-              count +
-              item.quantity,
-
-            0
-          ),
-
-        0
-      );
-
-    return res
-      .status(200)
-      .json({
-
-        totalOrders,
-
-        totalRevenue,
-
-        totalProductsSold,
-      });
-
-  } catch (error) {
-
-    console.error(
-      "ANALYTICS ERROR:",
-      error
+      0,
     );
 
-    return res
-      .status(500)
-      .json({
+    const totalProductsSold = orders.reduce(
+      (sum, order) =>
+        sum +
+        order.items.reduce(
+          (count, item) => count + item.quantity,
 
-        message:
-          "Error fetching analytics.",
+          0,
+        ),
 
-        error:
-          error.message,
-      });
+      0,
+    );
+
+    return res.status(200).json({
+      totalOrders,
+
+      totalRevenue,
+
+      totalProductsSold,
+    });
+  } catch (error) {
+    console.error("ANALYTICS ERROR:", error);
+
+    return res.status(500).json({
+      message: "Error fetching analytics.",
+
+      error: error.message,
+    });
   }
 }
 
@@ -452,148 +266,72 @@ export async function getSalesAnalytics(
 // DOWNLOAD CSV
 // ======================================
 
-export async function downloadOrdersCsv(
-  req,
-  res
-) {
-
-  if (
-    !isAdmin(req)
-  ) {
-
-    return res
-      .status(403)
-      .json({
-
-        message:
-          "Forbidden: Admins only.",
-      });
+export async function downloadOrdersCsv(req, res) {
+  if (!isAdmin(req)) {
+    return res.status(403).json({
+      message: "Forbidden: Admins only.",
+    });
   }
 
   try {
+    const orders = await Order.find();
 
-    const orders =
-      await Order.find();
+    const rows = orders.map((order) => {
+      const itemDescriptions = order.items
+        .map((item) => `${item.name} x${item.quantity}`)
+        .join("; ");
 
-    const rows =
-      orders.map(
-        (
-          order
-        ) => {
+      return `${order.orderId},${order.createdAt.toISOString()},${order.status},${order.total},"${itemDescriptions}"`;
+    });
 
-          const itemDescriptions =
-            order.items
-              .map(
-                (
-                  item
-                ) =>
+    const csv = ["Order ID,Created At,Status,Total,Items", ...rows].join("\n");
 
-                  `${item.name} x${item.quantity}`
-              )
-              .join("; ");
-
-          return `${order.orderId},${order.createdAt.toISOString()},${order.status},${order.total},"${itemDescriptions}"`;
-        }
-      );
-
-    const csv = [
-
-      "Order ID,Created At,Status,Total,Items",
-
-      ...rows,
-
-    ].join("\n");
+    res.setHeader("Content-Type", "text/csv");
 
     res.setHeader(
-      "Content-Type",
-      "text/csv"
-    );
-
-    res.setHeader(
-
       "Content-Disposition",
 
-      "attachment; filename=camx-orders.csv"
+      "attachment; filename=camx-orders.csv",
     );
 
     return res.send(csv);
-
   } catch (error) {
+    console.error("CSV EXPORT ERROR:", error);
 
-    console.error(
-      "CSV EXPORT ERROR:",
-      error
-    );
+    return res.status(500).json({
+      message: "Error exporting orders.",
 
-    return res
-      .status(500)
-      .json({
-
-        message:
-          "Error exporting orders.",
-
-        error:
-          error.message,
-      });
+      error: error.message,
+    });
   }
 }
 
-export async function updateOrderStatus(
-  req,
-  res
-) {
+export async function updateOrderStatus(req, res) {
+  if (!isAdmin(req)) {
+    return res.status(403).json({
+      message: "Forbidden: Admins only.",
+    });
+  }
 
-    if (
-      !isAdmin(req)
-    ) {
+  try {
+    const orderId = req.params.orderId;
 
-      return res
-        .status(403)
-        .json({
+    const status = req.body.status;
 
-          message:
-            "Forbidden: Admins only.",
-        });
-    }
+    await Order.updateOne({ orderId: orderId }, { $set: { status: status } });
 
-    try {
+    return res.status(200).json({
+      message: "Order status updated successfully.",
+    });
+  } catch (error) {
+    console.error("UPDATE ORDER STATUS ERROR:", error);
 
-      const orderId =
-        req.params.orderId;
-
-      const status =
-        req.body.status;
-
-      await Order.updateOne(
-        { orderId: orderId },
-        { $set: { status: status } }
-      );
-
-      return res
-        .status(200)
-        .json({
-          message:
-            "Order status updated successfully.",
-        });
-
-    } catch (error) {
-
-      console.error(
-        "UPDATE ORDER STATUS ERROR:",
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          message:
-            "Error updating order status.",
-          error:
-            error.message,
-        });
-    }
+    return res.status(500).json({
+      message: "Error updating order status.",
+      error: error.message,
+    });
+  }
 }
-
 
 export async function getDashboardStats(req, res) {
   if (!isAdmin(req)) {
@@ -602,28 +340,28 @@ export async function getDashboardStats(req, res) {
 
   try {
     const totalOrders = await Order.countDocuments();
-    
+
     // Revenue ගණනය කිරීම
     const revenueData = await Order.aggregate([
-      { $group: { _id: null, total: { $sum: "$total" } } }
+      { $group: { _id: null, total: { $sum: "$total" } } },
     ]);
-    
+
     const totalProducts = await Product.countDocuments();
     const totalCustomers = await User.countDocuments({ role: "user" });
 
     // Top Selling Product සොයා ගැනීම
     const topSelling = await Order.aggregate([
       { $unwind: "$items" },
-      { 
-        $group: { 
-          _id: "$items.productId", 
-          totalSold: { $sum: "$items.quantity" }, 
-          name: { $first: "$items.name" }, 
-          price: { $first: "$items.unitPrice" } 
-        } 
+      {
+        $group: {
+          _id: "$items.productId",
+          totalSold: { $sum: "$items.quantity" },
+          name: { $first: "$items.name" },
+          price: { $first: "$items.unitPrice" },
+        },
       },
       { $sort: { totalSold: -1 } },
-      { $limit: 1 }
+      { $limit: 1 },
     ]);
 
     res.status(200).json({
@@ -631,10 +369,12 @@ export async function getDashboardStats(req, res) {
       totalRevenue: revenueData[0]?.total || 0,
       totalProducts,
       totalCustomers,
-      topProduct: topSelling[0] || null
+      topProduct: topSelling[0] || null,
     });
   } catch (error) {
     console.error("DASHBOARD STATS ERROR:", error);
-    res.status(500).json({ message: "Error fetching stats", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error fetching stats", error: error.message });
   }
 }

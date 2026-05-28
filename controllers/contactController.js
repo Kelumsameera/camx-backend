@@ -1,4 +1,4 @@
-import Contact from "../models/contact.js";
+import Contact from "../models/Contact.js";
 import { isAdmin } from "./userController.js";
 
 // =====================================
@@ -6,12 +6,7 @@ import { isAdmin } from "./userController.js";
 // =====================================
 export async function createContact(req, res) {
   try {
-    const {
-      name,
-      email,
-      subject,
-      message,
-    } = req.body;
+    const { name, email, subject, message } = req.body;
 
     // Validation
     if (!name || !email || !subject || !message) {
