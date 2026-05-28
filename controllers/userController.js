@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import axios from "axios"; // REQUIRED FOR GOOGLE LOGIN
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
-import Otp from "../models/Otp.js";
+import Otp from "../models/otp.js";
 dotenv.config();
 // =========================
 // EMAIL TRANSPORTER
