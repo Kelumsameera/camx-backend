@@ -1,28 +1,20 @@
-import Product from "../models/product.js";
+import Product from "../models/Product.js";
 
-import { isAdmin }
-from "./userController.js";
+import { isAdmin } from "./userController.js";
 
 // =========================
 // CREATE PRODUCT
 // =========================
 
-export async function createProduct(
-  req,
-  res
-) {
-
+export async function createProduct(req, res) {
   try {
-
     // =========================
     // ADMIN CHECK
     // =========================
 
     if (!isAdmin(req)) {
-
       return res.status(403).json({
-        message:
-          "Forbidden: Admins only",
+        message: "Forbidden: Admins only",
       });
     }
 
@@ -31,7 +23,6 @@ export async function createProduct(
     // =========================
 
     if (req.user == null) {
-
       return res.status(401).json({
         message: "Unauthorized",
       });
@@ -44,92 +35,58 @@ export async function createProduct(
     // =========================
 
     const categoryCode =
-
       body.category
         ?.toUpperCase()
 
-        .replace(
-          /[^A-Z0-9]/g,
-          ""
-        )
+        .replace(/[^A-Z0-9]/g, "")
 
-        .slice(0, 5)
-
-      || "GEN";
+        .slice(0, 5) || "GEN";
 
     // =========================
     // RANDOM NUMBER
     // =========================
 
-    const randomNumber =
-
-      Math.floor(
-        1000 +
-        Math.random() * 9000
-      );
+    const randomNumber = Math.floor(1000 + Math.random() * 9000);
 
     // =========================
     // GENERATED SKU
     // =========================
 
-    const generatedSKU =
-
-      `CAM-${categoryCode}-${randomNumber}`;
+    const generatedSKU = `CAM-${categoryCode}-${randomNumber}`;
 
     // =========================
     // PRODUCT
     // =========================
 
-    const product =
-      new Product({
+    const product = new Product({
+      // AUTO SKU
+      productId: body.productId || generatedSKU,
 
-        // AUTO SKU
-        productId:
-          body.productId ||
-          generatedSKU,
+      name: body.name,
 
-        name:
-          body.name,
+      altName: body.altName || [],
 
-        altName:
-          body.altName || [],
+      description: body.description,
 
-        description:
-          body.description,
+      // DYNAMIC SPECIFICATIONS
+      specifications: body.specifications || {},
 
-        // DYNAMIC SPECIFICATIONS
-        specifications:
-          body.specifications || {},
+      price: body.price,
 
-        price:
-          body.price,
+      labelPrice: body.labelPrice ?? body.price,
 
-        labelPrice:
-          body.labelPrice ??
-          body.price,
+      images: body.images || [
+        "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80",
+      ],
 
-        images:
-          body.images || [
-            "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80",
-          ],
+      category: body.category || "Uncategorized",
 
-        category:
-          body.category ||
-          "Uncategorized",
+      brand: body.brand || "CAMX",
 
-        brand:
-          body.brand ||
-          "CAMX",
+      stock: body.stock ?? body.inventory ?? 0,
 
-        stock:
-          body.stock ??
-          body.inventory ??
-          0,
-
-        isAvailable:
-          body.isAvailable ??
-          true,
-      });
+      isAvailable: body.isAvailable ?? true,
+    });
 
     // =========================
     // SAVE
@@ -138,22 +95,15 @@ export async function createProduct(
     await product.save();
 
     return res.status(201).json({
-
-      message:
-        "Product created successfully",
+      message: "Product created successfully",
 
       product,
     });
-
   } catch (error) {
-
     return res.status(500).json({
+      message: "Error creating product",
 
-      message:
-        "Error creating product",
-
-      error:
-        error.message,
+      error: error.message,
     });
   }
 }
@@ -162,54 +112,35 @@ export async function createProduct(
 // GET ALL PRODUCTS
 // =========================
 
-export function getAllProducts(
-  req,
-  res
-) {
-
+export function getAllProducts(req, res) {
   if (isAdmin(req)) {
-
     Product.find()
 
       .then((products) => {
-
-        res.status(200).json(
-          products
-        );
+        res.status(200).json(products);
       })
 
       .catch((error) => {
-
         res.status(500).json({
-          message:
-            "Error fetching products",
+          message: "Error fetching products",
 
-          error:
-            error.message,
+          error: error.message,
         });
       });
-
   } else {
-
     Product.find({
       isAvailable: true,
     })
 
       .then((products) => {
-
-        res.status(200).json(
-          products
-        );
+        res.status(200).json(products);
       })
 
       .catch((error) => {
-
         res.status(500).json({
-          message:
-            "Error fetching products",
+          message: "Error fetching products",
 
-          error:
-            error.message,
+          error: error.message,
         });
       });
   }
@@ -219,44 +150,28 @@ export function getAllProducts(
 // GET PRODUCT BY ID
 // =========================
 
-export function getProductById(
-  req,
-  res
-) {
-
-  const productId =
-    req.params.productId;
+export function getProductById(req, res) {
+  const productId = req.params.productId;
 
   Product.findOne({
-    productId:
-      productId,
+    productId: productId,
   })
 
     .then((product) => {
-
-      if (
-        product == null
-      ) {
-
+      if (product == null) {
         return res.status(404).json({
-          message:
-            "Product not found",
+          message: "Product not found",
         });
       }
 
-      return res.status(200).json(
-        product
-      );
+      return res.status(200).json(product);
     })
 
     .catch((error) => {
-
       return res.status(500).json({
-        message:
-          "Error fetching product",
+        message: "Error fetching product",
 
-        error:
-          error.message,
+        error: error.message,
       });
     });
 }
@@ -265,92 +180,58 @@ export function getProductById(
 // UPDATE PRODUCT
 // =========================
 
-export async function updateProduct(
-  req,
-  res
-) {
-
+export async function updateProduct(req, res) {
   try {
-
     if (!isAdmin(req)) {
-
       return res.status(403).json({
-        message:
-          "Forbidden: Admins only",
+        message: "Forbidden: Admins only",
       });
     }
 
-    const productId =
-      req.params.productId;
+    const productId = req.params.productId;
 
     // INVENTORY -> STOCK
-    if (
-      req.body.inventory !=
-      null
-    ) {
-
-      req.body.stock =
-        req.body.inventory;
+    if (req.body.inventory != null) {
+      req.body.stock = req.body.inventory;
 
       delete req.body.inventory;
     }
 
     // LABEL PRICE
-    if (
-      req.body.price !=
-        null &&
-      req.body.labelPrice ==
-        null
-    ) {
-
-      req.body.labelPrice =
-        req.body.price;
+    if (req.body.price != null && req.body.labelPrice == null) {
+      req.body.labelPrice = req.body.price;
     }
 
     // UPDATE
-    const updatedProduct =
-      await Product.findOneAndUpdate(
-        {
-          productId:
-            productId,
-        },
+    const updatedProduct = await Product.findOneAndUpdate(
+      {
+        productId: productId,
+      },
 
-        req.body,
+      req.body,
 
-        {
-          new: true,
-          runValidators: true,
-        }
-      );
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
 
-    if (
-      !updatedProduct
-    ) {
-
+    if (!updatedProduct) {
       return res.status(404).json({
-        message:
-          "Product not found",
+        message: "Product not found",
       });
     }
 
     return res.status(200).json({
+      message: "Product updated successfully",
 
-      message:
-        "Product updated successfully",
-
-      product:
-        updatedProduct,
+      product: updatedProduct,
     });
-
   } catch (error) {
-
     return res.status(500).json({
+      message: "Error updating product",
 
-      message:
-        "Error updating product",
-
-      error:
-        error.message,
+      error: error.message,
     });
   }
 }
@@ -359,59 +240,36 @@ export async function updateProduct(
 // DELETE PRODUCT
 // =========================
 
-export function deleteProduct(
-  req,
-  res
-) {
-
+export function deleteProduct(req, res) {
   if (!isAdmin(req)) {
-
     return res.status(403).json({
-      message:
-        "Forbidden: Admins only",
+      message: "Forbidden: Admins only",
     });
   }
 
-  const productId =
-    req.params.productId;
+  const productId = req.params.productId;
 
   Product.findOneAndDelete({
-    productId:
-      productId,
+    productId: productId,
   })
 
-    .then(
-      (
-        deletedProduct
-      ) => {
-
-        if (
-          deletedProduct
-        ) {
-
-          res.status(200).json({
-            message:
-              "Product deleted successfully",
-          });
-
-        } else {
-
-          res.status(404).json({
-            message:
-              "Product not found",
-          });
-        }
+    .then((deletedProduct) => {
+      if (deletedProduct) {
+        res.status(200).json({
+          message: "Product deleted successfully",
+        });
+      } else {
+        res.status(404).json({
+          message: "Product not found",
+        });
       }
-    )
+    })
 
     .catch((error) => {
-
       res.status(500).json({
-        message:
-          "Error deleting product",
+        message: "Error deleting product",
 
-        error:
-          error.message,
+        error: error.message,
       });
     });
 }
@@ -424,9 +282,14 @@ export async function getTopSellingProducts(req, res) {
     // Orders වල items දත්ත විශ්ලේෂණය කර වැඩිම විකුණුම් ඇති නිෂ්පාදන ලබා ගන්න
     const topProducts = await Order.aggregate([
       { $unwind: "$items" },
-      { $group: { _id: "$items.productId", totalSold: { $sum: "$items.quantity" } } },
+      {
+        $group: {
+          _id: "$items.productId",
+          totalSold: { $sum: "$items.quantity" },
+        },
+      },
       { $sort: { totalSold: -1 } },
-      { $limit: 5 }
+      { $limit: 5 },
     ]);
     res.json(topProducts);
   } catch (error) {
