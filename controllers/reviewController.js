@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import Review from "../models/Review.js";
+import Review from "../models/review.js";
 
 // ==============================
 // HELPER FUNCTIONS
@@ -31,13 +31,7 @@ export async function createReview(req, res) {
     } = req.body;
 
     // VALIDATION
-    if (
-      !productId ||
-      !userId ||
-      !rating ||
-      !title ||
-      !comment
-    ) {
+    if (!productId || !userId || !rating || !title || !comment) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields",
@@ -394,15 +388,8 @@ export async function adminUpdateReview(req, res) {
   try {
     const { reviewId } = req.params;
 
-    const {
-      title,
-      comment,
-      rating,
-      hidden,
-      deleted,
-      status,
-      adminReply,
-    } = req.body;
+    const { title, comment, rating, hidden, deleted, status, adminReply } =
+      req.body;
 
     const review = await Review.findById(reviewId);
 
@@ -565,9 +552,7 @@ export async function getProductRating(req, res) {
 
     res.json({
       success: true,
-      averageRating: Number(
-        result[0].averageRating.toFixed(1)
-      ),
+      averageRating: Number(result[0].averageRating.toFixed(1)),
       reviewCount: result[0].reviewCount,
       helpfulCount: result[0].helpfulCount,
     });
