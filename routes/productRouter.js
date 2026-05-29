@@ -1,62 +1,25 @@
 import express from "express";
-
 import {
+  bulkAddProducts,
   createProduct,
   deleteProduct,
   getAllProducts,
   getProductById,
   updateProduct,
+  getTopSellingProducts,
+  getCategories, // අලුතින් එකතු කළා
 } from "../controllers/productController.js";
 
 const productRouter = express.Router();
 
-// =====================================
-// GET ALL PRODUCTS
-// =====================================
+productRouter.get("/", getAllProducts);
+productRouter.post("/", createProduct);
+productRouter.post("/bulk", bulkAddProducts); // Bulk add
+productRouter.get("/top-selling", getTopSellingProducts);
+productRouter.get("/categories", getCategories); // අනිවාර්යයෙන්ම /:productId ට උඩින් තිබිය යුතුය
 
-productRouter.get(
-  "/",
-  getAllProducts
-);
-
-// =====================================
-// CREATE PRODUCT
-// =====================================
-
-productRouter.post(
-  "/",
-  createProduct
-);
-
-// =====================================
-// GET SINGLE PRODUCT
-// =====================================
-
-productRouter.get(
-  "/:productId",
-  getProductById
-);
-
-// =====================================
-// UPDATE PRODUCT
-// =====================================
-
-productRouter.put(
-  "/:productId",
-  updateProduct
-);
-
-// =====================================
-// DELETE PRODUCT
-// =====================================
-
-productRouter.delete(
-  "/:productId",
-  deleteProduct
-);
-
-// =====================================
-// EXPORT
-// =====================================
+productRouter.get("/:productId", getProductById);
+productRouter.put("/:productId", updateProduct);
+productRouter.delete("/:productId", deleteProduct);
 
 export default productRouter;
