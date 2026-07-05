@@ -202,8 +202,24 @@ export async function getCategories(req, res) {
           as: "category",
         },
       },
-      { $unwind: "$category" },
-      { $project: { _id: 0, categoryId: "$category._id", name: "$category.name", count: 1 } },
+      // preserveNullAndEmptyArrays: true — without this, $unwind silently
+      // DROPS the whole group whenever a product's `category` doesn't
+      // resolve to a real Category document (stale/invalid id, a category
+      // that was later deleted, or leftover pre-migration data). That was
+      // the bug: if every product had an unresolved category, this
+      // aggregation would run fine and return 200, but with an empty array.
+      { $unwind: { path: "$category", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 0,
+          categoryId: "$category._id",
+          // Falls back to "Uncategorized" instead of disappearing, so a
+          // bad category reference is visible/debuggable in the dashboard
+          // rather than silently vanishing from the count.
+          name: { $ifNull: ["$category.name", "Uncategorized"] },
+          count: 1,
+        },
+      },
       { $sort: { count: -1 } },
     ]);
     return res.status(200).json(categories);
