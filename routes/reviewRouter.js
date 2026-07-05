@@ -20,52 +20,49 @@ const reviewRouter = express.Router();
 // PRODUCT REVIEW ROUTES
 // =====================================
 
-// Get all reviews for a product
+// GET ALL REVIEWS FOR PRODUCT
 reviewRouter.get("/product/:productId", getAllReviews);
 
-// Product rating summary
+// PRODUCT RATING SUMMARY
 reviewRouter.get("/rating/:productId", getProductRating);
 
 // =====================================
 // USER REVIEW ROUTES
 // =====================================
 
-// Create review
+// CREATE REVIEW
 reviewRouter.post("/", createReview);
 
-// Vote helpful / not helpful
+// VOTE HELPFUL / NOT HELPFUL
 reviewRouter.patch("/vote/:reviewId", voteReview);
 
-// Update own review
+// UPDATE REVIEW
 reviewRouter.put("/:reviewId", updateReview);
 
-// Delete own review
+// DELETE REVIEW
 reviewRouter.delete("/:reviewId", deleteReview);
 
 // =====================================
 // ADMIN REVIEW ROUTES
 // =====================================
 
-// Get all reviews
+// GET ALL REVIEWS
 reviewRouter.get("/admin/all", adminGetAllReviews);
 
-// Admin update review
+// ADMIN UPDATE REVIEW
 reviewRouter.put("/admin/:reviewId", adminUpdateReview);
 
-// Soft delete review
+// ADMIN SOFT DELETE REVIEW
 reviewRouter.delete("/admin/:reviewId", adminDeleteReview);
 
-// Restore deleted review
-reviewRouter.patch(
-  "/admin/restore/:reviewId",
-  adminRestoreReview
-);
+// ADMIN RESTORE REVIEW
+reviewRouter.patch("/admin/restore/:reviewId", adminRestoreReview);
 
 // =====================================
 // SINGLE REVIEW ROUTE
 // =====================================
 
-// Get single review
+// GET SINGLE REVIEW
 reviewRouter.get("/:reviewId", getReviewById);
 
 export default reviewRouter;

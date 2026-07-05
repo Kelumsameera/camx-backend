@@ -10,7 +10,7 @@ function isAdmin(req) {
 }
 
 function isOwner(review, req) {
-  return review.userId.toString() === req.user?._id?.toString();
+  return review.userId?.toString() === req.user?._id?.toString();
 }
 
 // ==============================
@@ -19,33 +19,29 @@ function isOwner(review, req) {
 
 export async function createReview(req, res) {
   try {
-    const {
-      productId,
-      userId,
-      name,
-      rating,
-      title,
-      comment,
-      verified,
-      images,
-    } = req.body;
+    const { productId, userId, name, rating, title, comment, verified, images } = req.body;
 
     // VALIDATION
-    if (!productId || !userId || !rating || !title || !comment) {
+    if (!productId || !rating || !title || !comment) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields",
       });
     }
 
-    // VALID OBJECT IDS
-    if (
-      !mongoose.Types.ObjectId.isValid(productId) ||
-      !mongoose.Types.ObjectId.isValid(userId)
-    ) {
+    // VALID PRODUCT ID
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid product or user ID",
+        message: "Invalid product ID",
+      });
+    }
+
+    // VALID USER ID (OPTIONAL)
+    if (userId && !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
       });
     }
 
@@ -58,28 +54,38 @@ export async function createReview(req, res) {
     }
 
     // PREVENT DUPLICATE REVIEWS
-    const existingReview = await Review.findOne({
-      productId,
-      userId,
-      deleted: false,
-    });
-
-    if (existingReview) {
-      return res.status(400).json({
-        success: false,
-        message: "You already reviewed this product",
+    // ONLY FOR LOGGED-IN USERS
+    if (userId) {
+      const existingReview = await Review.findOne({
+        productId,
+        userId,
+        deleted: false,
       });
+
+      if (existingReview) {
+        return res.status(400).json({
+          success: false,
+          message: "You already reviewed this product",
+        });
+      }
     }
 
     // CREATE REVIEW
     const review = new Review({
       productId,
-      userId,
+
+      userId: userId || null,
+
       name: name || "Anonymous",
+
       rating,
+
       title,
+
       comment,
+
       verified: verified ?? false,
+
       images: Array.isArray(images) ? images : [],
     });
 
@@ -108,7 +114,9 @@ export async function getAllReviews(req, res) {
     const { productId } = req.params;
 
     const page = Number(req.query.page) || 1;
+
     const limit = Number(req.query.limit) || 10;
+
     const sort = req.query.sort || "latest";
 
     let sortOption = {};
@@ -132,8 +140,11 @@ export async function getAllReviews(req, res) {
 
     const reviews = await Review.find({
       productId,
+
       hidden: false,
+
       deleted: false,
+
       status: "approved",
     })
       .populate("userId", "name")
@@ -143,16 +154,23 @@ export async function getAllReviews(req, res) {
 
     const totalReviews = await Review.countDocuments({
       productId,
+
       hidden: false,
+
       deleted: false,
+
       status: "approved",
     });
 
     res.json({
       success: true,
+
       totalReviews,
+
       currentPage: page,
+
       totalPages: Math.ceil(totalReviews / limit),
+
       reviews,
     });
   } catch (err) {
@@ -179,9 +197,7 @@ export async function getReviewById(req, res) {
       });
     }
 
-    const review = await Review.findById(reviewId)
-      .populate("userId", "name")
-      .populate("productId", "name");
+    const review = await Review.findById(reviewId).populate("userId", "name").populate("productId", "name");
 
     if (!review || review.deleted) {
       return res.status(404).json({
@@ -210,6 +226,7 @@ export async function getReviewById(req, res) {
 export async function voteReview(req, res) {
   try {
     const { reviewId } = req.params;
+
     const { type } = req.body;
 
     if (!["helpful", "notHelpful"].includes(type)) {
@@ -257,6 +274,7 @@ export async function voteReview(req, res) {
 export async function updateReview(req, res) {
   try {
     const { reviewId } = req.params;
+
     const { title, comment, rating, images } = req.body;
 
     const review = await Review.findById(reviewId);
@@ -269,7 +287,7 @@ export async function updateReview(req, res) {
     }
 
     // OWNER CHECK
-    if (!isOwner(review, req)) {
+    if (review.userId && !isOwner(review, req)) {
       return res.status(403).json({
         success: false,
         message: "Unauthorized",
@@ -277,7 +295,9 @@ export async function updateReview(req, res) {
     }
 
     if (title !== undefined) review.title = title;
+
     if (comment !== undefined) review.comment = comment;
+
     if (rating !== undefined) review.rating = rating;
 
     if (images !== undefined) {
@@ -318,7 +338,7 @@ export async function deleteReview(req, res) {
     }
 
     // OWNER CHECK
-    if (!isOwner(review, req)) {
+    if (review.userId && !isOwner(review, req)) {
       return res.status(403).json({
         success: false,
         message: "Unauthorized",
@@ -355,10 +375,7 @@ export async function adminGetAllReviews(req, res) {
   }
 
   try {
-    const reviews = await Review.find()
-      .populate("userId", "name")
-      .populate("productId", "name")
-      .sort({ createdAt: -1 });
+    const reviews = await Review.find().populate("userId", "name").populate("productId", "name").sort({ createdAt: -1 });
 
     res.json({
       success: true,
@@ -388,8 +405,7 @@ export async function adminUpdateReview(req, res) {
   try {
     const { reviewId } = req.params;
 
-    const { title, comment, rating, hidden, deleted, status, adminReply } =
-      req.body;
+    const { title, comment, rating, hidden, deleted, status, adminReply } = req.body;
 
     const review = await Review.findById(reviewId);
 
@@ -401,11 +417,17 @@ export async function adminUpdateReview(req, res) {
     }
 
     if (title !== undefined) review.title = title;
+
     if (comment !== undefined) review.comment = comment;
+
     if (rating !== undefined) review.rating = rating;
+
     if (hidden !== undefined) review.hidden = hidden;
+
     if (deleted !== undefined) review.deleted = deleted;
+
     if (status !== undefined) review.status = status;
+
     if (adminReply !== undefined) review.adminReply = adminReply;
 
     await review.save();
@@ -520,20 +542,26 @@ export async function getProductRating(req, res) {
       {
         $match: {
           productId: new mongoose.Types.ObjectId(productId),
+
           hidden: false,
+
           deleted: false,
+
           status: "approved",
         },
       },
       {
         $group: {
           _id: "$productId",
+
           averageRating: {
             $avg: "$rating",
           },
+
           reviewCount: {
             $sum: 1,
           },
+
           helpfulCount: {
             $sum: "$helpful",
           },
@@ -544,16 +572,22 @@ export async function getProductRating(req, res) {
     if (result.length === 0) {
       return res.json({
         success: true,
+
         averageRating: 0,
+
         reviewCount: 0,
+
         helpfulCount: 0,
       });
     }
 
     res.json({
       success: true,
+
       averageRating: Number(result[0].averageRating.toFixed(1)),
+
       reviewCount: result[0].reviewCount,
+
       helpfulCount: result[0].helpfulCount,
     });
   } catch (error) {
