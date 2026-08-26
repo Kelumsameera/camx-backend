@@ -19,7 +19,6 @@ const productSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    // SPECIFICATIONS
     specifications: {
       type: Map,
       of: String,
@@ -37,12 +36,6 @@ const productSchema = new mongoose.Schema(
       type: [String],
       required: true,
     },
-    // CATEGORY (Tree Reference)
-    // A product is always saved against the LOWEST (leaf) category the user
-    // picked in the cascading selector. Parent categories are derived on
-    // demand via GET /api/categories/:id/path (breadcrumb).
-    // The old `category: String` + `subcategories: [String]` fields have been
-    // removed — see scripts/migrateCategories.js for the migration path.
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
@@ -63,14 +56,24 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // ✅ shippingOptions එක main object එක ඇතුළට ගෙනාවා
+    shippingOptions: {
+      priceMatch: { type: Boolean, default: true },
+      protectionPlan: { type: Boolean, default: true },
+      protectionFeePercentage: { type: Number, default: 0.06 }, // 6%
+      freeDelivery: { type: Boolean, default: true },
+      deliveryDaysMin: { type: Number, default: 3 },
+      deliveryDaysMax: { type: Number, default: 6 },
+      pickupAvailable: { type: Boolean, default: true },
+      pickupTime: { type: String, default: "24h at our Colombo showroom" },
+    },
   },
   {
-    timestamps: true,
+    timestamps: true, // මේක තමයි Schema එකේ දෙවෙනි parameter එක
   },
 );
 
-// Common query pattern: list available products in a given category.
 productSchema.index({ category: 1, isAvailable: 1 });
 
-const Product = mongoose.model("Product", productSchema);
+const Product = mongoose.models.Product || mongoose.model("Product", productSchema);
 export default Product;

@@ -43,6 +43,8 @@ async function formatProduct(body, index = 0) {
     brand: body.brand || "CAMX",
     stock: body.stock ?? body.inventory ?? 0,
     isAvailable: body.isAvailable ?? true,
+    // ✅ අලුතින් එකතු කළ shippingOptions කොටස
+    ...(body.shippingOptions && { shippingOptions: body.shippingOptions }),
   };
 }
 
