@@ -1,5 +1,24 @@
 import mongoose from "mongoose";
 
+// ✅ shippingOptions වෙනම sub-schema එකක් විදිහට define කළා.
+// වැදගත්ම දේ: subfields වලට default value දාලා නෑ.
+// (කලින් "default: true" වගේ දේවල් දාලා තිබ්බ නිසා, admin
+// data නොදුන්නත් Mongoose auto-fill කළා — ඒකයි හැම product එකකටම
+// shipping options පෙනුනේ)
+const shippingOptionsSchema = new mongoose.Schema(
+  {
+    priceMatch: { type: Boolean },
+    protectionPlan: { type: Boolean },
+    protectionFeePercentage: { type: Number },
+    freeDelivery: { type: Boolean },
+    deliveryDaysMin: { type: Number },
+    deliveryDaysMax: { type: Number },
+    pickupAvailable: { type: Boolean },
+    pickupTime: { type: String },
+  },
+  { _id: false },
+);
+
 const productSchema = new mongoose.Schema(
   {
     productId: {
@@ -56,16 +75,12 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    // ✅ shippingOptions එක main object එක ඇතුළට ගෙනාවා
+    // ✅ shippingOptions එකට "default: undefined" දාලා තියෙනවා.
+    // admin data නොදුන්නොත් මේ field එකම document එකේ save වෙන්නේ නෑ
+    // (undefined ලෙසම පවතී), auto-fill වෙන්නෙත් නෑ.
     shippingOptions: {
-      priceMatch: { type: Boolean, default: true },
-      protectionPlan: { type: Boolean, default: true },
-      protectionFeePercentage: { type: Number, default: 0.06 }, // 6%
-      freeDelivery: { type: Boolean, default: true },
-      deliveryDaysMin: { type: Number, default: 3 },
-      deliveryDaysMax: { type: Number, default: 6 },
-      pickupAvailable: { type: Boolean, default: true },
-      pickupTime: { type: String, default: "24h at our Colombo showroom" },
+      type: shippingOptionsSchema,
+      default: undefined,
     },
   },
   {

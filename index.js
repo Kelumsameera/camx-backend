@@ -12,7 +12,7 @@ import reviewRouter from "./routes/reviewRouter.js";
 import analyticsRouter from "./routes/analyticsRoutes.js";
 import contactRouter from "./routes/contactRouter.js";
 import categoryRouter from "./routes/categoryRouter.js";
-
+import paymentRoutes from "./routes/paymentRoutes.js";
 dotenv.config();
 
 const app = express();
@@ -97,6 +97,8 @@ app.use("/api/analytics", analyticsRouter);
 app.use("/api/contacts", contactRouter);
 
 app.use("/api/categories", categoryRouter);
+
+app.use("/api/payments", paymentRoutes);
 // =========================
 // TEST ROUTE
 // =========================

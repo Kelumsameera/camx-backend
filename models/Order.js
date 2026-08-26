@@ -82,6 +82,31 @@ const orderSchema = new mongoose.Schema(
       default: "COD",
     },
 
+    // PayHere (or any future gateway) payment confirmation status —
+    // kept SEPARATE from `status` below so PayHere's async notify callback
+    // never overwrites fulfillment states like "fulfilled"/"cancelled".
+    paymentStatus: {
+      type: String,
+      enum: ["Pending", "Paid", "Failed", "Cancelled", "Chargedback"],
+      default: "Pending",
+    },
+
+    // PayHere gateway metadata, set once the notify_url callback lands.
+    payhere: {
+      paymentId: { type: String, default: null },
+      method: { type: String, default: null },
+      statusCode: { type: String, default: null },
+    },
+
+    // checkoutOrder() deducts product stock at order-creation time, even
+    // for CARD orders that haven't been paid yet. If the payment then
+    // fails/is cancelled, the notify handler restores that stock — this
+    // flag stops it from being restored twice if PayHere retries the callback.
+    stockRestored: {
+      type: Boolean,
+      default: false,
+    },
+
     // PRICES
     subtotal: {
       type: Number,
