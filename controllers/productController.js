@@ -30,6 +30,8 @@ async function formatProduct(body, index = 0) {
   const randomNumber = Math.floor(1000 + Math.random() * 9000);
   const generatedSKU = `CAM-${categoryCode}-${Date.now()}-${randomNumber}-${index}`;
 
+  const stockValue = Number(body.stock ?? body.inventory ?? 0);
+
   return {
     productId: body.productId || generatedSKU,
     name: body.name,
@@ -41,8 +43,8 @@ async function formatProduct(body, index = 0) {
     images: body.images && body.images.length > 0 ? body.images : [DEFAULT_IMAGE],
     category: categoryDoc._id,
     brand: body.brand || "CAMX",
-    stock: body.stock ?? body.inventory ?? 0,
-    isAvailable: body.isAvailable ?? true,
+    stock: stockValue,
+    isAvailable: body.isAvailable !== undefined ? Boolean(body.isAvailable) : stockValue > 0,
     // ✅ අලුතින් එකතු කළ shippingOptions කොටස
     ...(body.shippingOptions && { shippingOptions: body.shippingOptions }),
   };
@@ -65,7 +67,7 @@ export async function createProduct(req, res) {
 
 export async function getAllProducts(req, res) {
   try {
-    const filter = isAdmin(req) ? {} : { isAvailable: true };
+    const filter = isAdmin(req) ? {} : { isAvailable: { $ne: false } };
     const products = await Product.find(filter).populate("category", "name slug");
     return res.status(200).json(products);
   } catch (error) {
@@ -92,6 +94,15 @@ export async function updateProduct(req, res) {
       req.body.stock = req.body.inventory;
       delete req.body.inventory;
     }
+
+    // ✅ Stock logic: Admin අලුතින් stock දැමූ විට isAvailable ස්වයංක්‍රීයව sync වීම
+    if (req.body.stock !== undefined) {
+      const stockNum = Number(req.body.stock);
+      if (req.body.isAvailable === undefined) {
+        req.body.isAvailable = stockNum > 0;
+      }
+    }
+
     if (req.body.price != null && req.body.labelPrice == null) {
       req.body.labelPrice = req.body.price;
     }
@@ -108,7 +119,9 @@ export async function updateProduct(req, res) {
       }
     }
 
-    const updatedProduct = await Product.findOneAndUpdate({ productId: req.params.productId }, req.body, { new: true, runValidators: true }).populate("category", "name slug");
+    // ✅ "new: true" deprecated - "returnDocument: 'after'" use karanawa
+    // (Mongoose eke console warning eka fix karanna).
+    const updatedProduct = await Product.findOneAndUpdate({ productId: req.params.productId }, req.body, { returnDocument: "after", runValidators: true }).populate("category", "name slug");
 
     if (!updatedProduct) return res.status(404).json({ message: "Product not found" });
 
