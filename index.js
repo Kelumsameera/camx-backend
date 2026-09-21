@@ -1,8 +1,14 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import jwt from "jsonwebtoken";
 import cors from "cors";
+import helmet from "helmet";
+
+// MIDDLEWARE & UTILITIES
+import { authenticate } from "./middleware/auth.js";
+import { generalLimiter } from "./middleware/rateLimiter.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import logger from "./utils/logger.js";
 
 // ROUTES
 import userRouter from "./routes/userRouter.js";
@@ -13,98 +19,101 @@ import analyticsRouter from "./routes/analyticsRoutes.js";
 import contactRouter from "./routes/contactRouter.js";
 import categoryRouter from "./routes/categoryRouter.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+
 dotenv.config();
 
 const app = express();
 
 // =========================
-// DATABASE CONNECTION
+// SECURITY HEADERS (CAMX-020)
 // =========================
-
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log("✅ Connected to MongoDB");
-  })
-  .catch((error) => {
-    console.log("❌ MongoDB Connection Error:", error);
-  });
-
-// =========================
-// MIDDLEWARE
-// =========================
-
-// JSON PARSER
-app.use(express.json());
-
-// CORS
 app.use(
-  cors({
-    origin: "*",
-    credentials: true,
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
 
 // =========================
-// AUTH MIDDLEWARE
+// CORS CONFIGURATION (CAMX-020)
 // =========================
+const defaultAllowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+  "https://camx.lk",
+  "https://admin.camx.lk",
+  "https://www.camx.lk",
+];
 
-app.use((req, res, next) => {
-  const authorizationHeader = req.header("Authorization");
+const envAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()) : [];
 
-  if (authorizationHeader && authorizationHeader.startsWith("Bearer ")) {
-    const token = authorizationHeader.replace("Bearer ", "");
+const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envAllowedOrigins]));
 
-    jwt.verify(
-      token,
-      process.env.SECRET_KEY,
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, Postman, or server-to-server webhooks like PayHere)
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS policy does not allow access from origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id"],
+  }),
+);
 
-      (error, content) => {
-        if (error) {
-          return res.status(401).json({
-            message: "Invalid or expired token",
-          });
-        } else {
-          req.user = content;
+// =========================
+// BODY PARSERS & RESOURCE LIMITS (CAMX-007, CAMX-024)
+// =========================
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+app.use(express.json({ limit: "1mb" }));
 
-          next();
-        }
-      },
-    );
-  } else {
-    next();
-  }
-});
+// =========================
+// GENERAL RATE LIMITING (CAMX-021)
+// =========================
+app.use(generalLimiter);
+
+// =========================
+// AUTHENTICATION MIDDLEWARE
+// =========================
+app.use(authenticate);
+
+// =========================
+// DATABASE CONNECTION
+// =========================
+const isRunningTests = process.env.NODE_ENV === "test" || process.env.NODE_ENV === "testing" || process.execArgv.includes("--test") || process.argv.some((a) => a.includes("test"));
+
+if (!isRunningTests && process.env.MONGO_URI) {
+  mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+      logger.info("Connected to MongoDB successfully");
+    })
+    .catch((error) => {
+      logger.error("MongoDB Connection Error", error);
+    });
+}
 
 // =========================
 // API ROUTES
 // =========================
 
-// USERS
 app.use("/api/users", userRouter);
-
-// PRODUCTS
 app.use("/api/products", productRouter);
-
-// ORDERS
 app.use("/api/orders", orderRouter);
-
-// REVIEWS
 app.use("/api/reviews", reviewRouter);
-
 app.use("/api/analytics", analyticsRouter);
-
 app.use("/api/contacts", contactRouter);
-
 app.use("/api/categories", categoryRouter);
-
 app.use("/api/payments", paymentRoutes);
-// =========================
-// TEST ROUTE
-// =========================
 
+// Health check / root route
 app.get("/", (req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
     message: "CAMX.lk Backend Running 🚀",
   });
@@ -113,20 +122,27 @@ app.get("/", (req, res) => {
 // =========================
 // 404 HANDLER
 // =========================
-
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: "Route not found",
+    message: `Route not found: ${req.method} ${req.originalUrl}`,
   });
 });
 
 // =========================
-// SERVER
+// CENTRALIZED ERROR HANDLER
 // =========================
+app.use(errorHandler);
 
+// =========================
+// SERVER START
+// =========================
 const port = process.env.PORT || 5000;
 
-app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
-});
+if (!isRunningTests) {
+  app.listen(port, () => {
+    logger.info(`Server running on port ${port}`);
+  });
+}
+
+export default app;

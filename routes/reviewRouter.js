@@ -1,5 +1,4 @@
 import express from "express";
-
 import {
   createReview,
   getAllReviews,
@@ -13,56 +12,40 @@ import {
   adminRestoreReview,
   getProductRating,
 } from "../controllers/reviewController.js";
+import { requireAdmin } from "../middleware/auth.js";
+import { reviewLimiter } from "../middleware/rateLimiter.js";
 
 const reviewRouter = express.Router();
 
 // =====================================
-// PRODUCT REVIEW ROUTES
+// PRODUCT REVIEW ROUTES (PUBLIC READ)
 // =====================================
 
-// GET ALL REVIEWS FOR PRODUCT
 reviewRouter.get("/product/:productId", getAllReviews);
-
-// PRODUCT RATING SUMMARY
 reviewRouter.get("/rating/:productId", getProductRating);
 
 // =====================================
 // USER REVIEW ROUTES
 // =====================================
 
-// CREATE REVIEW
-reviewRouter.post("/", createReview);
-
-// VOTE HELPFUL / NOT HELPFUL
-reviewRouter.patch("/vote/:reviewId", voteReview);
-
-// UPDATE REVIEW
-reviewRouter.put("/:reviewId", updateReview);
-
-// DELETE REVIEW
-reviewRouter.delete("/:reviewId", deleteReview);
+reviewRouter.post("/", reviewLimiter, createReview);
+reviewRouter.patch("/vote/:reviewId", reviewLimiter, voteReview);
+reviewRouter.put("/:reviewId", reviewLimiter, updateReview);
+reviewRouter.delete("/:reviewId", reviewLimiter, deleteReview);
 
 // =====================================
 // ADMIN REVIEW ROUTES
 // =====================================
 
-// GET ALL REVIEWS
-reviewRouter.get("/admin/all", adminGetAllReviews);
-
-// ADMIN UPDATE REVIEW
-reviewRouter.put("/admin/:reviewId", adminUpdateReview);
-
-// ADMIN SOFT DELETE REVIEW
-reviewRouter.delete("/admin/:reviewId", adminDeleteReview);
-
-// ADMIN RESTORE REVIEW
-reviewRouter.patch("/admin/restore/:reviewId", adminRestoreReview);
+reviewRouter.get("/admin/all", requireAdmin, adminGetAllReviews);
+reviewRouter.put("/admin/:reviewId", requireAdmin, adminUpdateReview);
+reviewRouter.delete("/admin/:reviewId", requireAdmin, adminDeleteReview);
+reviewRouter.patch("/admin/restore/:reviewId", requireAdmin, adminRestoreReview);
 
 // =====================================
 // SINGLE REVIEW ROUTE
 // =====================================
 
-// GET SINGLE REVIEW
 reviewRouter.get("/:reviewId", getReviewById);
 
 export default reviewRouter;

@@ -1,282 +1,345 @@
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
-import User from "../models/User.js"; // Dashboard stats සඳහා User අවශ්‍ය වේ
-import { isAdmin } from "./userController.js";
+import User from "../models/User.js";
+import { isAdmin } from "../middleware/auth.js";
+import logger from "../utils/logger.js";
+import { generateCsv } from "../utils/csvSanitizer.js";
+import { parsePagination } from "../middleware/validate.js";
 
 // ======================================
-// CHECKOUT ORDER (WEB & POS SUPPORTED)
+// CHECKOUT ORDER (SECURE, ATOMIC, IDEMPOTENT)
+// (CAMX-002, CAMX-003, CAMX-004)
 // ======================================
-
 export async function checkoutOrder(req, res) {
-  const items = req.body.items;
+  const { items } = req.body;
+  const idempotencyKey = req.header("idempotency-key") || req.body.idempotencyKey;
 
-  // ======================================
-  // VALIDATION
-  // ======================================
+  // Validation of cart items array
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ message: "Cart is empty." });
+    return res.status(400).json({ success: false, message: "Cart is empty." });
   }
 
+  // Idempotency check: if request was already processed with this key, return the existing order
+  if (idempotencyKey) {
+    try {
+      const existingOrder = await Order.findOne({ idempotencyKey });
+      if (existingOrder) {
+        logger.info("Idempotent checkout returned existing order", {
+          idempotencyKey,
+          orderId: existingOrder.orderId,
+        });
+        return res.status(200).json({
+          success: true,
+          message: "Order already processed (idempotent response).",
+          order: existingOrder,
+        });
+      }
+    } catch (err) {
+      logger.error("Error checking idempotency key", err);
+    }
+  }
+
+  // Deducted products tracking for rollback on partial failure
+  const successfulDeductions = [];
+
   try {
-    const productUpdates = [];
-    let calculatedTotal = 0;
+    let calculatedSubtotal = 0;
     const formattedItems = [];
 
-    // ======================================
-    // CHECK PRODUCTS & UPDATE STOCK
-    // ======================================
+    // Phase 1: Validate items & product existence
     for (const item of items) {
-      const product = await Product.findOne({ productId: item.productId });
-
-      if (!product) {
-        return res
-          .status(404)
-          .json({ message: `Product ${item.productId} not found.` });
+      const quantity = parseInt(item.quantity, 10);
+      if (isNaN(quantity) || quantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid quantity for product ${item.productId || "unknown"}.`,
+        });
       }
 
-      // STOCK CHECK
-      if (product.stock < item.quantity) {
-        return res
-          .status(400)
-          .json({ message: `Insufficient stock for ${product.name}.` });
+      if (!item.productId) {
+        return res.status(400).json({ success: false, message: "Missing productId for an item in cart." });
       }
-
-      // UPDATE STOCK
-      product.stock -= item.quantity;
-      if (product.stock <= 0) {
-        product.isAvailable = false;
-      }
-      productUpdates.push(product.save());
-
-      // යවන price එක හෝ Database එකේ price එක ගැනීම
-      const itemPrice = item.price || item.unitPrice || product.price;
-
-      formattedItems.push({
-        productId: product.productId,
-        name: product.name,
-        quantity: item.quantity,
-        unitPrice: itemPrice,
-        image: product.images?.[0] || "",
-      });
-
-      // CALCULATE TOTAL
-      calculatedTotal += item.quantity * itemPrice;
     }
 
-    // SAVE ALL PRODUCTS (Stock update)
-    await Promise.all(productUpdates);
+    // Phase 2: Atomic inventory deduction with rollback
+    for (const item of items) {
+      const quantity = parseInt(item.quantity, 10);
 
-    // ======================================
-    // CREATE ORDER
-    // ======================================
-    // POS එකෙන් එනවා නම් සමහර දත්ත නැහැ. ඒ වෙනුවට "POS" කියලා Default දානවා.
-    const isPOS =
-      req.body.paymentMethod === "CASH" || req.body.paymentMethod === "CARD";
+      // ATOMIC UPDATE: Only decrement if stock >= requested quantity
+      const updatedProduct = await Product.findOneAndUpdate({ productId: item.productId, stock: { $gte: quantity } }, { $inc: { stock: -quantity } }, { returnDocument: "after" });
+
+      if (!updatedProduct) {
+        // Stock is insufficient or product does not exist -> ROLLBACK ALL PREVIOUS DEDUCTIONS
+        logger.warn("Insufficient stock during checkout, initiating rollback", {
+          productId: item.productId,
+          requestedQty: quantity,
+        });
+
+        // Rollback already deducted products
+        for (const deduction of successfulDeductions) {
+          await Product.updateOne({ productId: deduction.productId }, { $inc: { stock: deduction.quantity } });
+        }
+
+        const productDoc = await Product.findOne({ productId: item.productId });
+        const productName = productDoc ? productDoc.name : item.productId;
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for ${productName}.`,
+        });
+      }
+
+      // Track successful deduction for rollback if subsequent items fail
+      successfulDeductions.push({
+        productId: item.productId,
+        quantity,
+      });
+
+      // Update availability flag if stock reaches 0
+      if (updatedProduct.stock <= 0) {
+        await Product.updateOne({ productId: item.productId }, { $set: { isAvailable: false } });
+      }
+
+      // Authoritative DB price only (NEVER trust client-provided price)
+      const authoritativeUnitPrice = Number(updatedProduct.price) || 0;
+      const itemTotal = authoritativeUnitPrice * quantity;
+      calculatedSubtotal += itemTotal;
+
+      formattedItems.push({
+        productId: updatedProduct.productId,
+        name: updatedProduct.name,
+        quantity,
+        unitPrice: authoritativeUnitPrice,
+        image: updatedProduct.images?.[0] || "",
+      });
+    }
+
+    // Phase 3: Authoritative Financial Calculation
+    const isPOS = req.body.paymentMethod === "CASH" || req.body.paymentMethod === "CARD";
+
+    // Shipping: default 0 or calculate authoritatively
+    const shipping = typeof req.body.shipping === "number" && req.body.shipping >= 0 ? req.body.shipping : 0;
+
+    // Server-calculated final total (client totals are completely ignored)
+    const finalTotal = Math.max(0, calculatedSubtotal + shipping);
+
+    const orderStatus = isPOS ? "COMPLETED" : req.body.paymentMethod === "CARD" ? "pending" : "paid";
+    const paymentStatus = req.body.paymentMethod === "CARD" ? "Pending" : isPOS ? "Paid" : "Pending";
 
     const order = new Order({
-      orderId: `ORD-${Date.now()}`,
+      orderId: `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      idempotencyKey: idempotencyKey || undefined,
 
-      // USER & CONTACT INFO
-      userEmail: req.user?.email || null,
-      name: req.body.name || req.body.customerName || "Walk-in Customer",
-      email: req.body.email || "pos-customer@store.local", // Required නිසා Dummy එකක් දානවා
-      phone: req.body.phone || req.body.customerPhone || "N/A",
-      address: req.body.address || (isPOS ? "Store Checkout" : ""),
-      city: req.body.city || (isPOS ? "POS" : ""),
-      district: req.body.district || (isPOS ? "POS" : ""),
+      userEmail: req.user?.email || (req.body.email ? req.body.email.trim().toLowerCase() : null),
+      name: (req.body.name || req.body.customerName || "Walk-in Customer").trim(),
+      email: (req.body.email || "pos-customer@store.local").trim().toLowerCase(),
+      phone: (req.body.phone || req.body.customerPhone || "N/A").trim(),
+      address: req.body.address || (isPOS ? "Store Checkout" : "N/A"),
+      city: req.body.city || (isPOS ? "POS" : "N/A"),
+      district: req.body.district || (isPOS ? "POS" : "N/A"),
       notes: req.body.notes || "",
 
-      // PAYMENT & STATUS
       paymentMethod: req.body.paymentMethod || "COD",
-      status: req.body.orderStatus || req.body.status || "paid",
+      paymentStatus,
+      status: orderStatus,
 
-      // PRICES (Frontend එකෙන් total එව්වෙ නැත්නම් ගණනය කළ එක ගන්නවා)
-      subtotal: req.body.subtotal || calculatedTotal,
-      shipping: req.body.shipping || 0,
-      total: req.body.totalPrice || req.body.total || calculatedTotal,
+      // Authoritative calculated prices
+      subtotal: calculatedSubtotal,
+      shipping,
+      total: finalTotal,
 
-      // POS ADVANCED FIELDS
       customerName: req.body.customerName || "Walk-in Customer",
       customerPhone: req.body.customerPhone || "",
-      discountGiven: req.body.discountGiven || 0,
+      discountGiven: 0,
 
-      // ITEMS
       items: formattedItems,
     });
 
     await order.save();
 
-    // ======================================
-    // RESPONSE
-    // ======================================
+    logger.info("Order created successfully", { orderId: order.orderId, total: finalTotal });
+
     return res.status(201).json({
+      success: true,
       message: "Order completed successfully.",
       order,
     });
   } catch (error) {
-    console.error("CHECKOUT ERROR:", error);
+    logger.error("CHECKOUT ERROR, executing rollback", error);
+
+    // Rollback any stock deducted before error occurred
+    for (const deduction of successfulDeductions) {
+      try {
+        await Product.updateOne({ productId: deduction.productId }, { $inc: { stock: deduction.quantity } });
+      } catch (rollbackErr) {
+        logger.error("Stock rollback failure", rollbackErr, { deduction });
+      }
+    }
+
     return res.status(500).json({
+      success: false,
       message: "Error completing order.",
-      error: error.message,
     });
   }
 }
 
 // ======================================
-// GET ORDERS
+// GET ORDERS (CAMX-013, CAMX-025)
 // ======================================
-
 export async function getOrders(req, res) {
   try {
+    const { page, limit, skip } = parsePagination(req, 20, 100);
+
     if (isAdmin(req)) {
-      const orders = await Order.find().sort({ createdAt: -1 });
+      const orders = await Order.find().sort({ createdAt: -1 }).skip(skip).limit(limit);
       return res.status(200).json(orders);
     }
 
     if (!req.user) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    const orders = await Order.find({ userEmail: req.user.email }).sort({
-      createdAt: -1,
-    });
+    const orders = await Order.find({ userEmail: req.user.email }).sort({ createdAt: -1 }).skip(skip).limit(limit);
+
     return res.status(200).json(orders);
   } catch (error) {
-    console.error("GET ORDERS ERROR:", error);
-    return res
-      .status(500)
-      .json({ message: "Error fetching orders.", error: error.message });
+    logger.error("GET ORDERS ERROR", error);
+    return res.status(500).json({ success: false, message: "Error fetching orders." });
   }
 }
 
 // ======================================
-// GET ORDER BY ID
+// GET ORDER BY ID (CAMX-008, CAMX-013)
 // ======================================
-
 export async function getOrderById(req, res) {
   try {
-    const order = await Order.findOne({ orderId: req.params.orderId });
+    const { orderId } = req.params;
+    const order = await Order.findOne({ orderId });
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found." });
+      return res.status(404).json({ success: false, message: "Order not found." });
     }
 
-    if (!isAdmin(req) && req.user?.email !== order.userEmail) {
-      return res.status(403).json({ message: "Forbidden" });
+    // Allow Admin OR the user who owns the order
+    const isOwner = req.user && req.user.email && order.userEmail && req.user.email.toLowerCase() === order.userEmail.toLowerCase();
+
+    if (!isAdmin(req) && !isOwner) {
+      return res.status(403).json({ success: false, message: "Forbidden: Access denied to this order" });
     }
 
     return res.status(200).json(order);
   } catch (error) {
-    console.error("GET ORDER ERROR:", error);
-    return res
-      .status(500)
-      .json({ message: "Error fetching order.", error: error.message });
+    logger.error("GET ORDER ERROR", error);
+    return res.status(500).json({ success: false, message: "Error fetching order." });
   }
 }
 
 // ======================================
-// SALES ANALYTICS
+// SALES ANALYTICS (ADMIN ONLY) (CAMX-009)
 // ======================================
-
 export async function getSalesAnalytics(req, res) {
   if (!isAdmin(req)) {
-    return res.status(403).json({ message: "Forbidden: Admins only." });
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only." });
   }
 
   try {
-    const orders = await Order.find();
-    const totalOrders = orders.length;
-    const totalRevenue = orders.reduce((sum, order) => sum + order.total, 0);
-    const totalProductsSold = orders.reduce(
-      (sum, order) =>
-        sum + order.items.reduce((count, item) => count + item.quantity, 0),
-      0,
-    );
+    const stats = await Order.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: "$total" },
+          totalProductsSold: { $sum: { $sum: "$items.quantity" } },
+        },
+      },
+    ]);
 
-    return res
-      .status(200)
-      .json({ totalOrders, totalRevenue, totalProductsSold });
+    const result = stats[0] || { totalOrders: 0, totalRevenue: 0, totalProductsSold: 0 };
+    return res.status(200).json({
+      totalOrders: result.totalOrders,
+      totalRevenue: result.totalRevenue,
+      totalProductsSold: result.totalProductsSold,
+    });
   } catch (error) {
-    console.error("ANALYTICS ERROR:", error);
-    return res
-      .status(500)
-      .json({ message: "Error fetching analytics.", error: error.message });
+    logger.error("ANALYTICS ERROR", error);
+    return res.status(500).json({ success: false, message: "Error fetching analytics." });
   }
 }
 
 // ======================================
-// DOWNLOAD CSV
+// DOWNLOAD CSV (CAMX-022)
 // ======================================
-
 export async function downloadOrdersCsv(req, res) {
   if (!isAdmin(req)) {
-    return res.status(403).json({ message: "Forbidden: Admins only." });
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only." });
   }
 
   try {
-    const orders = await Order.find();
+    const orders = await Order.find().sort({ createdAt: -1 }).limit(1000);
+
+    const headers = ["Order ID", "Created At", "Status", "Payment Method", "Total (LKR)", "Items"];
     const rows = orders.map((order) => {
-      const itemDescriptions = order.items
-        .map((item) => `${item.name} x${item.quantity}`)
-        .join("; ");
-      return `${order.orderId},${order.createdAt.toISOString()},${order.status},${order.total},"${itemDescriptions}"`;
+      const itemDescriptions = order.items.map((item) => `${item.name} x${item.quantity}`).join("; ");
+      return [order.orderId, order.createdAt ? order.createdAt.toISOString() : "", order.status, order.paymentMethod, order.total, itemDescriptions];
     });
 
-    const csv = ["Order ID,Created At,Status,Total,Items", ...rows].join("\n");
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=camx-orders.csv",
-    );
-    return res.send(csv);
+    const csvData = generateCsv(headers, rows);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=camx-orders.csv");
+    return res.status(200).send(csvData);
   } catch (error) {
-    console.error("CSV EXPORT ERROR:", error);
-    return res
-      .status(500)
-      .json({ message: "Error exporting orders.", error: error.message });
+    logger.error("CSV EXPORT ERROR", error);
+    return res.status(500).json({ success: false, message: "Error exporting orders." });
   }
 }
 
 // ======================================
-// UPDATE ORDER STATUS
+// UPDATE ORDER STATUS (ADMIN ONLY) (CAMX-014)
 // ======================================
-
 export async function updateOrderStatus(req, res) {
   if (!isAdmin(req)) {
-    return res.status(403).json({ message: "Forbidden: Admins only." });
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only." });
+  }
+
+  const { orderId } = req.params;
+  const { status } = req.body;
+
+  const validStatuses = ["pending", "paid", "fulfilled", "cancelled", "COMPLETED"];
+  if (!status || !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid order status. Allowed values: ${validStatuses.join(", ")}`,
+    });
   }
 
   try {
-    const orderId = req.params.orderId;
-    const status = req.body.status;
-    await Order.updateOne({ orderId: orderId }, { $set: { status: status } });
-    return res
-      .status(200)
-      .json({ message: "Order status updated successfully." });
+    const order = await Order.findOneAndUpdate({ orderId }, { $set: { status } }, { returnDocument: "after" });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    logger.info("Order status updated", { orderId, status });
+    return res.status(200).json({ success: true, message: "Order status updated successfully.", order });
   } catch (error) {
-    console.error("UPDATE ORDER STATUS ERROR:", error);
-    return res
-      .status(500)
-      .json({ message: "Error updating order status.", error: error.message });
+    logger.error("UPDATE ORDER STATUS ERROR", error);
+    return res.status(500).json({ success: false, message: "Error updating order status." });
   }
 }
 
 // ======================================
-// DASHBOARD STATS
+// DASHBOARD STATS (ADMIN ONLY)
 // ======================================
-
 export async function getDashboardStats(req, res) {
   if (!isAdmin(req)) {
-    return res.status(403).json({ message: "Forbidden: Admins only" });
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
   }
 
   try {
     const totalOrders = await Order.countDocuments();
-    const revenueData = await Order.aggregate([
-      { $group: { _id: null, total: { $sum: "$total" } } },
-    ]);
+    const revenueData = await Order.aggregate([{ $group: { _id: null, total: { $sum: "$total" } } }]);
     const totalProducts = await Product.countDocuments();
-    const totalCustomers = await User.countDocuments({ role: "user" });
+    const totalCustomers = await User.countDocuments({ role: { $in: ["user", "customer"] } });
 
     const topSelling = await Order.aggregate([
       { $unwind: "$items" },
@@ -292,7 +355,7 @@ export async function getDashboardStats(req, res) {
       { $limit: 1 },
     ]);
 
-    res.status(200).json({
+    return res.status(200).json({
       totalOrders,
       totalRevenue: revenueData[0]?.total || 0,
       totalProducts,
@@ -300,18 +363,20 @@ export async function getDashboardStats(req, res) {
       topProduct: topSelling[0] || null,
     });
   } catch (error) {
-    console.error("DASHBOARD STATS ERROR:", error);
-    res
-      .status(500)
-      .json({ message: "Error fetching stats", error: error.message });
+    logger.error("DASHBOARD STATS ERROR", error);
+    return res.status(500).json({ success: false, message: "Error fetching stats" });
   }
 }
 
 // ======================================
-// COMPREHENSIVE ANALYTICS
+// COMPREHENSIVE ANALYTICS (ADMIN ONLY) (CAMX-009)
 // ======================================
-
 export async function getComprehensiveAnalytics(req, res) {
+  // REQUIRE ADMIN AUTH (CAMX-009)
+  if (!isAdmin(req)) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only." });
+  }
+
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -326,7 +391,7 @@ export async function getComprehensiveAnalytics(req, res) {
               $group: {
                 _id: null,
                 totalOrders: { $sum: 1 },
-                totalRevenue: { $sum: "$total" }, // Schema එකට අනුව "total" ලෙස වෙනස් කළා
+                totalRevenue: { $sum: "$total" },
                 totalProductsSold: { $sum: { $sum: "$items.quantity" } },
               },
             },
@@ -337,7 +402,7 @@ export async function getComprehensiveAnalytics(req, res) {
               $group: {
                 _id: null,
                 dailyOrders: { $sum: 1 },
-                dailyRevenue: { $sum: "$total" }, // Schema එකට අනුව "total" ලෙස වෙනස් කළා
+                dailyRevenue: { $sum: "$total" },
                 dailyProductsSold: { $sum: { $sum: "$items.quantity" } },
               },
             },
@@ -352,7 +417,6 @@ export async function getComprehensiveAnalytics(req, res) {
         $group: {
           _id: "$items.productId",
           totalSold: { $sum: "$items.quantity" },
-          // Schema එකට අනුව "$items.unitPrice" ලෙස වෙනස් කළා
           revenue: {
             $sum: { $multiply: ["$items.unitPrice", "$items.quantity"] },
           },
@@ -380,12 +444,12 @@ export async function getComprehensiveAnalytics(req, res) {
       },
     ]);
 
-    const overall = ordersStats[0].overall[0] || {
+    const overall = ordersStats[0]?.overall[0] || {
       totalOrders: 0,
       totalRevenue: 0,
       totalProductsSold: 0,
     };
-    const daily = ordersStats[0].daily[0] || {
+    const daily = ordersStats[0]?.daily[0] || {
       dailyOrders: 0,
       dailyRevenue: 0,
       dailyProductsSold: 0,
@@ -393,8 +457,7 @@ export async function getComprehensiveAnalytics(req, res) {
 
     return res.status(200).json({ overall, daily, bestSellers });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Error fetching analytics", error: error.message });
+    logger.error("COMPREHENSIVE ANALYTICS ERROR", error);
+    return res.status(500).json({ success: false, message: "Error fetching analytics" });
   }
 }

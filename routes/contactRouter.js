@@ -1,44 +1,19 @@
 import express from "express";
-
-import {
-  createContact,
-  getAllContacts,
-  getContactById,
-  markAsReplied,
-  toggleHiddenContact,
-  deleteContact,
-  restoreContact,
-} from "../controllers/contactController.js";
+import { createContact, getAllContacts, getContactById, markAsReplied, toggleHiddenContact, deleteContact, restoreContact } from "../controllers/contactController.js";
+import { requireAdmin } from "../middleware/auth.js";
+import { contactLimiter } from "../middleware/rateLimiter.js";
 
 const contactRouter = express.Router();
 
-// =====================================
-// PUBLIC ROUTES
-// =====================================
+// Public
+contactRouter.post("/", contactLimiter, createContact);
 
-// Send contact message
-contactRouter.post("/", createContact);
-
-// =====================================
-// ADMIN ROUTES
-// =====================================
-
-// Get all contact messages
-contactRouter.get("/admin/all", getAllContacts);
-
-// Get single contact message
-contactRouter.get("/admin/:contactId", getContactById);
-
-// Mark contact as replied
-contactRouter.patch("/admin/replied/:contactId", markAsReplied);
-
-// Hide / Unhide contact message
-contactRouter.patch("/admin/hide/:contactId", toggleHiddenContact);
-
-// Soft delete contact
-contactRouter.delete("/admin/:contactId", deleteContact);
-
-// Restore deleted contact
-contactRouter.patch("/admin/restore/:contactId", restoreContact);
+// Admin only
+contactRouter.get("/admin/all", requireAdmin, getAllContacts);
+contactRouter.get("/admin/:contactId", requireAdmin, getContactById);
+contactRouter.patch("/admin/replied/:contactId", requireAdmin, markAsReplied);
+contactRouter.patch("/admin/hide/:contactId", requireAdmin, toggleHiddenContact);
+contactRouter.delete("/admin/:contactId", requireAdmin, deleteContact);
+contactRouter.patch("/admin/restore/:contactId", requireAdmin, restoreContact);
 
 export default contactRouter;

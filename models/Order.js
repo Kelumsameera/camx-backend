@@ -4,30 +4,33 @@ import mongoose from "mongoose";
 // ORDER ITEM SCHEMA
 // ======================================
 
-const orderItemSchema = new mongoose.Schema({
-  productId: {
-    type: String,
-    required: true,
+const orderItemSchema = new mongoose.Schema(
+  {
+    productId: {
+      type: String,
+      required: true,
+    },
+    name: {
+      type: String,
+      required: true,
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    unitPrice: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    image: {
+      type: String,
+      default: "",
+    },
   },
-  name: {
-    type: String,
-    required: true,
-  },
-  quantity: {
-    type: Number,
-    required: true,
-    min: 1,
-  },
-  unitPrice: {
-    type: Number,
-    required: true,
-    min: 0,
-  },
-  image: {
-    type: String,
-    default: "",
-  },
-});
+  { _id: false },
+);
 
 // ======================================
 // ORDER SCHEMA
@@ -39,24 +42,39 @@ const orderSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+      index: true,
+    },
+
+    // Idempotency Key to prevent duplicate checkouts
+    idempotencyKey: {
+      type: String,
+      sparse: true,
+      index: true,
     },
 
     // USER (Online Orders)
     userEmail: {
       type: String,
       default: null,
+      lowercase: true,
+      trim: true,
+      index: true,
     },
     name: {
       type: String,
       required: true,
+      trim: true,
     },
     email: {
       type: String,
       required: true,
+      lowercase: true,
+      trim: true,
     },
     phone: {
       type: String,
       required: true,
+      trim: true,
     },
     address: {
       type: String,
@@ -77,43 +95,40 @@ const orderSchema = new mongoose.Schema(
 
     paymentMethod: {
       type: String,
-      // POS එකෙන් එන CASH, CARD සහ ONLINE මෙතැනට එකතු කළා
       enum: ["COD", "BankTransfer", "CASH", "CARD", "ONLINE"],
       default: "COD",
     },
 
-    // PayHere (or any future gateway) payment confirmation status —
-    // kept SEPARATE from `status` below so PayHere's async notify callback
-    // never overwrites fulfillment states like "fulfilled"/"cancelled".
     paymentStatus: {
       type: String,
       enum: ["Pending", "Paid", "Failed", "Cancelled", "Chargedback"],
       default: "Pending",
+      index: true,
     },
 
-    // PayHere gateway metadata, set once the notify_url callback lands.
+    // PayHere gateway metadata
     payhere: {
       paymentId: { type: String, default: null },
       method: { type: String, default: null },
       statusCode: { type: String, default: null },
     },
 
-    // checkoutOrder() deducts product stock at order-creation time, even
-    // for CARD orders that haven't been paid yet. If the payment then
-    // fails/is cancelled, the notify handler restores that stock — this
-    // flag stops it from being restored twice if PayHere retries the callback.
     stockRestored: {
       type: Boolean,
       default: false,
     },
 
-    // PRICES
+    // Authoritative financial totals
     subtotal: {
       type: Number,
+      required: true,
+      min: 0,
       default: 0,
     },
     shipping: {
       type: Number,
+      required: true,
+      min: 0,
       default: 0,
     },
     total: {
@@ -126,19 +141,18 @@ const orderSchema = new mongoose.Schema(
     items: {
       type: [orderItemSchema],
       required: true,
+      validate: [(val) => val.length > 0, "Order must contain at least one item."],
     },
 
     // STATUS
     status: {
       type: String,
-      // POS එකෙන් එන COMPLETED මෙතැනට එකතු කළා
       enum: ["pending", "paid", "fulfilled", "cancelled", "COMPLETED"],
-      default: "paid",
+      default: "pending",
+      index: true,
     },
 
-    // ==========================================
-    // ADVANCED POS FIELDS
-    // ==========================================
+    // POS FIELDS
     customerName: {
       type: String,
       default: "Walk-in Customer",
@@ -150,6 +164,7 @@ const orderSchema = new mongoose.Schema(
     discountGiven: {
       type: Number,
       default: 0,
+      min: 0,
     },
   },
   {
@@ -157,6 +172,11 @@ const orderSchema = new mongoose.Schema(
   },
 );
 
-const Order = mongoose.model("Order", orderSchema);
+// Indexes for fast lookup and dashboard analytics
+orderSchema.index({ userEmail: 1, createdAt: -1 });
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+
+const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 
 export default Order;

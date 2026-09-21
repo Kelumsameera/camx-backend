@@ -1,37 +1,58 @@
-import { BetaAnalyticsDataClient } from '@google-analytics/data';
-import path from 'path';
+import { BetaAnalyticsDataClient } from "@google-analytics/data";
+import path from "path";
+import fs from "fs";
+import { isAdmin } from "../middleware/auth.js";
+import logger from "../utils/logger.js";
 
-// JSON key එකේ නිවැරදි Path එක දෙන්න
-const keyFilePath = path.join(process.cwd(), 'camx-analytics-key.json');
+const keyFilePath = path.join(process.cwd(), "camx-analytics-key.json");
 
-const analyticsDataClient = new BetaAnalyticsDataClient({
-  keyFilename: keyFilePath,
-});
-
-export async function getGoogleAnalyticsData(req, res) {
+let analyticsDataClient = null;
+if (fs.existsSync(keyFilePath)) {
   try {
-    // ඔබේ Property ID එක (Google Analytics Admin එකෙන් ලබා ගන්න)
-    const propertyId = '538937737'; 
+    analyticsDataClient = new BetaAnalyticsDataClient({
+      keyFilename: keyFilePath,
+    });
+  } catch (err) {
+    logger.warn("Could not initialize Google Analytics client", err);
+  }
+}
+
+// ==========================================
+// GET GOOGLE ANALYTICS DATA (ADMIN ONLY) (CAMX-010)
+// ==========================================
+export async function getGoogleAnalyticsData(req, res) {
+  // SECURITY: Require Admin Authorization (CAMX-010)
+  if (!isAdmin(req)) {
+    return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
+  }
+
+  if (!analyticsDataClient) {
+    return res.status(503).json({
+      success: false,
+      message: "Google Analytics service is not configured on this server",
+    });
+  }
+
+  try {
+    const propertyId = process.env.GA_PROPERTY_ID || "538937737";
 
     const [response] = await analyticsDataClient.runReport({
       property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: '30daysAgo', endDate: 'today' }],
-      metrics: [
-        { name: 'activeUsers' },
-        { name: 'screenPageViews' },
-        { name: 'totalUsers' }
-      ],
+      dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+      metrics: [{ name: "activeUsers" }, { name: "screenPageViews" }, { name: "totalUsers" }],
     });
 
     const data = {
-      activeUsers: response.rows[0]?.metricValues[0].value || 0,
-      pageViews: response.rows[0]?.metricValues[1].value || 0,
-      totalUsers: response.rows[0]?.metricValues[2].value || 0,
+      activeUsers: Number(response.rows?.[0]?.metricValues?.[0]?.value || 0),
+      pageViews: Number(response.rows?.[0]?.metricValues?.[1]?.value || 0),
+      totalUsers: Number(response.rows?.[0]?.metricValues?.[2]?.value || 0),
     };
 
-    res.json(data);
+    return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.error("Analytics Error:", error);
-    res.status(500).json({ message: "Error fetching GA data" });
+    logger.error("Analytics Error", error);
+    return res.status(500).json({ success: false, message: "Error fetching GA data" });
   }
 }
+
+export default { getGoogleAnalyticsData };

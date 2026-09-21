@@ -2,7 +2,10 @@ import mongoose from "mongoose";
 import Product from "../models/Product.js";
 import Order from "../models/Order.js";
 import Category from "../models/Category.js";
-import { isAdmin } from "./userController.js";
+import { isAdmin } from "../middleware/auth.js";
+import { sanitizeHtml, sanitizeText } from "../utils/xssSanitizer.js";
+import { parsePagination } from "../middleware/validate.js";
+import logger from "../utils/logger.js";
 
 const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80";
 
@@ -13,8 +16,7 @@ async function resolveCategory(categoryId) {
   return Category.findById(categoryId);
 }
 
-// NOTE: this is now async because the SKU prefix is derived from the
-// referenced Category's name instead of a raw category string.
+// Format and validate product DTO
 async function formatProduct(body, index = 0) {
   const categoryDoc = await resolveCategory(body.category);
   if (!categoryDoc) {
@@ -30,123 +32,233 @@ async function formatProduct(body, index = 0) {
   const randomNumber = Math.floor(1000 + Math.random() * 9000);
   const generatedSKU = `CAM-${categoryCode}-${Date.now()}-${randomNumber}-${index}`;
 
-  const stockValue = Number(body.stock ?? body.inventory ?? 0);
+  const price = Math.max(0, Number(body.price) || 0);
+  const labelPrice = Math.max(0, Number(body.labelPrice ?? body.price ?? 0));
+  const stockValue = Math.max(0, parseInt(body.stock ?? body.inventory ?? 0, 10) || 0);
+
+  // Specifications sanitization (CAMX-019)
+  const specifications = {};
+  if (body.specifications && typeof body.specifications === "object") {
+    for (const [key, val] of Object.entries(body.specifications)) {
+      if (typeof key === "string" && typeof val === "string") {
+        specifications[sanitizeText(key)] = sanitizeText(val);
+      }
+    }
+  }
 
   return {
     productId: body.productId || generatedSKU,
-    name: body.name,
-    altName: body.altName || [],
-    description: body.description || "",
-    specifications: body.specifications || {},
-    price: body.price || 0,
-    labelPrice: body.labelPrice ?? body.price ?? 0,
-    images: body.images && body.images.length > 0 ? body.images : [DEFAULT_IMAGE],
+    name: sanitizeText(body.name || "Untitled Product"),
+    altName: Array.isArray(body.altName) ? body.altName.map(sanitizeText) : [],
+    description: sanitizeHtml(body.description || ""),
+    specifications,
+    price,
+    labelPrice,
+    images: Array.isArray(body.images) && body.images.length > 0 ? body.images : [DEFAULT_IMAGE],
     category: categoryDoc._id,
-    brand: body.brand || "CAMX",
+    brand: sanitizeText(body.brand || "CAMX"),
     stock: stockValue,
     isAvailable: body.isAvailable !== undefined ? Boolean(body.isAvailable) : stockValue > 0,
-    // ✅ අලුතින් එකතු කළ shippingOptions කොටස
     ...(body.shippingOptions && { shippingOptions: body.shippingOptions }),
   };
 }
 
+// ==========================================
+// CREATE PRODUCT (CAMX-014, CAMX-015)
+// ==========================================
 export async function createProduct(req, res) {
   try {
-    if (req.user == null) return res.status(401).json({ message: "Unauthorized" });
-    if (!isAdmin(req)) return res.status(403).json({ message: "Forbidden: Admins only" });
+    if (req.user == null) return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (!isAdmin(req)) return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
+
+    if (!req.body.name || req.body.price === undefined || !req.body.category) {
+      return res.status(400).json({ success: false, message: "Product name, price, and category are required." });
+    }
 
     const formattedProduct = await formatProduct(req.body);
     const product = new Product(formattedProduct);
     await product.save();
 
-    return res.status(201).json({ message: "Product created successfully", product });
+    logger.info("Product created", { productId: product.productId });
+    return res.status(201).json({ success: true, message: "Product created successfully", product });
   } catch (error) {
-    return res.status(500).json({ message: "Error creating product", error: error.message });
+    logger.error("Error creating product", error);
+    return res.status(500).json({ success: false, message: "Error creating product", error: error.message });
   }
 }
 
+// ==========================================
+// GET ALL PRODUCTS (PAGINATED) (CAMX-025)
+// ==========================================
 export async function getAllProducts(req, res) {
   try {
+    const { page, limit, skip } = parsePagination(req, 24, 100);
+
     const filter = isAdmin(req) ? {} : { isAvailable: { $ne: false } };
-    const products = await Product.find(filter).populate("category", "name slug");
+
+    // Support optional category filtering
+    if (req.query.category && mongoose.Types.ObjectId.isValid(req.query.category)) {
+      filter.category = req.query.category;
+    }
+
+    const products = await Product.find(filter).populate("category", "name slug").sort({ createdAt: -1 }).skip(skip).limit(limit);
+
     return res.status(200).json(products);
   } catch (error) {
-    return res.status(500).json({ message: "Error fetching products", error: error.message });
+    logger.error("Error fetching products", error);
+    return res.status(500).json({ success: false, message: "Error fetching products" });
   }
 }
 
+// ==========================================
+// GET PRODUCT BY ID
+// ==========================================
 export async function getProductById(req, res) {
   try {
     const product = await Product.findOne({ productId: req.params.productId }).populate("category", "name slug");
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
     return res.status(200).json(product);
   } catch (error) {
-    return res.status(500).json({ message: "Error fetching product", error: error.message });
+    logger.error("Error fetching product", error);
+    return res.status(500).json({ success: false, message: "Error fetching product" });
   }
 }
 
+// ==========================================
+// UPDATE PRODUCT (DTO ALLOWLIST) (CAMX-014, CAMX-015)
+// ==========================================
 export async function updateProduct(req, res) {
   try {
-    if (req.user == null) return res.status(401).json({ message: "Unauthorized" });
-    if (!isAdmin(req)) return res.status(403).json({ message: "Forbidden: Admins only" });
+    if (req.user == null) return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (!isAdmin(req)) return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
 
-    if (req.body.inventory != null) {
-      req.body.stock = req.body.inventory;
-      delete req.body.inventory;
+    const existingProduct = await Product.findOne({ productId: req.params.productId });
+    if (!existingProduct) return res.status(404).json({ success: false, message: "Product not found" });
+
+    // Explicit DTO Allowlist (CAMX-014)
+    const updateDTO = {};
+
+    if (req.body.name !== undefined) updateDTO.name = sanitizeText(req.body.name);
+    if (Array.isArray(req.body.altName)) updateDTO.altName = req.body.altName.map(sanitizeText);
+    if (req.body.description !== undefined) updateDTO.description = sanitizeHtml(req.body.description);
+    if (req.body.brand !== undefined) updateDTO.brand = sanitizeText(req.body.brand);
+
+    if (req.body.price !== undefined) {
+      updateDTO.price = Math.max(0, Number(req.body.price) || 0);
+    }
+    if (req.body.labelPrice !== undefined) {
+      updateDTO.labelPrice = Math.max(0, Number(req.body.labelPrice) || 0);
     }
 
-    // ✅ Stock logic: Admin අලුතින් stock දැමූ විට isAvailable ස්වයංක්‍රීයව sync වීම
+    if (Array.isArray(req.body.images) && req.body.images.length > 0) {
+      updateDTO.images = req.body.images;
+    }
+
+    if (req.body.inventory !== undefined && req.body.stock === undefined) {
+      req.body.stock = req.body.inventory;
+    }
+
     if (req.body.stock !== undefined) {
-      const stockNum = Number(req.body.stock);
+      const stockNum = Math.max(0, parseInt(req.body.stock, 10) || 0);
+      updateDTO.stock = stockNum;
+      // Auto sync isAvailable based on stock if not explicitly provided
       if (req.body.isAvailable === undefined) {
-        req.body.isAvailable = stockNum > 0;
+        updateDTO.isAvailable = stockNum > 0;
       }
     }
 
-    if (req.body.price != null && req.body.labelPrice == null) {
-      req.body.labelPrice = req.body.price;
+    if (req.body.isAvailable !== undefined) {
+      updateDTO.isAvailable = Boolean(req.body.isAvailable);
     }
-    if (req.body.images && req.body.images.length === 0) {
-      req.body.images = [DEFAULT_IMAGE];
+
+    if (req.body.specifications && typeof req.body.specifications === "object") {
+      const specs = {};
+      for (const [k, v] of Object.entries(req.body.specifications)) {
+        if (typeof k === "string" && typeof v === "string") {
+          specs[sanitizeText(k)] = sanitizeText(v);
+        }
+      }
+      updateDTO.specifications = specs;
     }
+
+    if (req.body.shippingOptions && typeof req.body.shippingOptions === "object") {
+      updateDTO.shippingOptions = req.body.shippingOptions;
+    }
+
     if (req.body.category !== undefined) {
       if (!mongoose.Types.ObjectId.isValid(req.body.category)) {
-        return res.status(400).json({ message: "Invalid category id" });
+        return res.status(400).json({ success: false, message: "Invalid category id" });
       }
       const categoryExists = await Category.exists({ _id: req.body.category });
       if (!categoryExists) {
-        return res.status(404).json({ message: "Category not found" });
+        return res.status(404).json({ success: false, message: "Category not found" });
       }
+      updateDTO.category = req.body.category;
     }
 
-    // ✅ "new: true" deprecated - "returnDocument: 'after'" use karanawa
-    // (Mongoose eke console warning eka fix karanna).
-    const updatedProduct = await Product.findOneAndUpdate({ productId: req.params.productId }, req.body, { returnDocument: "after", runValidators: true }).populate("category", "name slug");
+    const updatedProduct = await Product.findOneAndUpdate({ productId: req.params.productId }, { $set: updateDTO }, { returnDocument: "after", runValidators: true }).populate("category", "name slug");
 
-    if (!updatedProduct) return res.status(404).json({ message: "Product not found" });
-
-    return res.status(200).json({ message: "Product updated successfully", product: updatedProduct });
+    logger.info("Product updated", { productId: req.params.productId });
+    return res.status(200).json({ success: true, message: "Product updated successfully", product: updatedProduct });
   } catch (error) {
-    return res.status(500).json({ message: "Error updating product", error: error.message });
+    logger.error("Error updating product", error);
+    return res.status(500).json({ success: false, message: "Error updating product" });
   }
 }
 
+// ==========================================
+// DELETE PRODUCT
+// ==========================================
 export async function deleteProduct(req, res) {
   try {
-    if (req.user == null) return res.status(401).json({ message: "Unauthorized" });
-    if (!isAdmin(req)) return res.status(403).json({ message: "Forbidden: Admins only" });
+    if (req.user == null) return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (!isAdmin(req)) return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
 
     const deletedProduct = await Product.findOneAndDelete({
       productId: req.params.productId,
     });
-    if (!deletedProduct) return res.status(404).json({ message: "Product not found" });
+    if (!deletedProduct) return res.status(404).json({ success: false, message: "Product not found" });
 
-    return res.status(200).json({ message: "Product deleted successfully" });
+    logger.info("Product deleted", { productId: req.params.productId });
+    return res.status(200).json({ success: true, message: "Product deleted successfully" });
   } catch (error) {
-    return res.status(500).json({ message: "Error deleting product", error: error.message });
+    logger.error("Error deleting product", error);
+    return res.status(500).json({ success: false, message: "Error deleting product" });
   }
 }
 
+// ==========================================
+// BULK ADD PRODUCTS (CAMX-024)
+// ==========================================
+export async function bulkAddProducts(req, res) {
+  try {
+    if (req.user == null) return res.status(401).json({ success: false, message: "Unauthorized" });
+    if (!isAdmin(req)) return res.status(403).json({ success: false, message: "Forbidden: Admins only" });
+
+    const { products } = req.body;
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ success: false, message: "Products must be a non-empty array" });
+    }
+
+    // Resource constraint: max 50 products per bulk request (CAMX-024)
+    if (products.length > 50) {
+      return res.status(400).json({ success: false, message: "Maximum 50 products allowed per bulk upload" });
+    }
+
+    const formattedProducts = await Promise.all(products.map((body, index) => formatProduct(body, index)));
+    const insertedProducts = await Product.insertMany(formattedProducts);
+
+    logger.info("Bulk products added", { count: insertedProducts.length });
+    return res.status(201).json({ success: true, message: "Products added successfully", products: insertedProducts });
+  } catch (error) {
+    logger.error("Error adding bulk products", error);
+    return res.status(500).json({ success: false, message: "Error adding products" });
+  }
+}
+
+// ==========================================
+// TOP SELLING PRODUCTS
+// ==========================================
 export async function getTopSellingProducts(req, res) {
   try {
     const topProducts = await Order.aggregate([
@@ -180,31 +292,14 @@ export async function getTopSellingProducts(req, res) {
     ]);
     return res.status(200).json(topProducts);
   } catch (error) {
-    return res.status(500).json({ message: "Error fetching top products", error: error.message });
+    logger.error("Error fetching top products", error);
+    return res.status(500).json({ success: false, message: "Error fetching top products" });
   }
 }
 
-export async function bulkAddProducts(req, res) {
-  try {
-    if (req.user == null) return res.status(401).json({ message: "Unauthorized" });
-    if (!isAdmin(req)) return res.status(403).json({ message: "Forbidden: Admins only" });
-
-    const products = req.body.products;
-    if (!Array.isArray(products)) {
-      return res.status(400).json({ message: "Products must be an array" });
-    }
-
-    const formattedProducts = await Promise.all(products.map((body, index) => formatProduct(body, index)));
-
-    const insertedProducts = await Product.insertMany(formattedProducts);
-    return res.status(201).json({ message: "Products added successfully", products: insertedProducts });
-  } catch (error) {
-    return res.status(500).json({ message: "Error adding products", error: error.message });
-  }
-}
-
-// Kept for backward compatibility with existing dashboards — now derives
-// counts from the real Category collection instead of raw strings.
+// ==========================================
+// GET CATEGORIES (Aggregated counts)
+// ==========================================
 export async function getCategories(req, res) {
   try {
     const categories = await Product.aggregate([
@@ -217,20 +312,11 @@ export async function getCategories(req, res) {
           as: "category",
         },
       },
-      // preserveNullAndEmptyArrays: true — without this, $unwind silently
-      // DROPS the whole group whenever a product's `category` doesn't
-      // resolve to a real Category document (stale/invalid id, a category
-      // that was later deleted, or leftover pre-migration data). That was
-      // the bug: if every product had an unresolved category, this
-      // aggregation would run fine and return 200, but with an empty array.
       { $unwind: { path: "$category", preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 0,
           categoryId: "$category._id",
-          // Falls back to "Uncategorized" instead of disappearing, so a
-          // bad category reference is visible/debuggable in the dashboard
-          // rather than silently vanishing from the count.
           name: { $ifNull: ["$category.name", "Uncategorized"] },
           count: 1,
         },
@@ -239,6 +325,7 @@ export async function getCategories(req, res) {
     ]);
     return res.status(200).json(categories);
   } catch (error) {
-    return res.status(500).json({ message: "Error fetching categories", error: error.message });
+    logger.error("Error fetching categories", error);
+    return res.status(500).json({ success: false, message: "Error fetching categories" });
   }
 }

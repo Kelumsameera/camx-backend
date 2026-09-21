@@ -1,11 +1,9 @@
 import crypto from "crypto";
-
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
+import logger from "../utils/logger.js";
+import { isAdmin } from "../middleware/auth.js";
 
-const MERCHANT_ID = process.env.PAYHERE_MERCHANT_ID;
-const MERCHANT_SECRET = process.env.PAYHERE_MERCHANT_SECRET;
-const SANDBOX = process.env.PAYHERE_SANDBOX !== "true"; // default true (sandbox) unless explicitly "false"
 const CURRENCY = "LKR";
 
 function formatAmount(value) {
@@ -21,70 +19,73 @@ function md5(input) {
   return crypto.createHash("md5").update(input).digest("hex").toUpperCase();
 }
 
-// checkoutOrder() deducts stock at order-creation time, before a CARD
-// payment is actually confirmed. If the payment fails/is cancelled, that
-// stock needs to go back — otherwise it's lost forever for a sale that
-// never happened.
+// Restore stock if card payment fails or is cancelled
 async function restoreStock(order) {
+  if (order.stockRestored) return;
+
   await Promise.all(
     order.items.map(async (item) => {
-      const product = await Product.findOne({ productId: item.productId });
-
-      if (product) {
-        product.stock += item.quantity;
-        product.isAvailable = true;
-        await product.save();
+      const updated = await Product.findOneAndUpdate({ productId: item.productId }, { $inc: { stock: item.quantity }, $set: { isAvailable: true } });
+      if (!updated) {
+        logger.warn("Could not find product to restore stock", { productId: item.productId });
       }
     }),
   );
 }
 
 // =========================================================
-// POST /api/payments/payhere/hash
-// Body: { orderId }  (this is the Mongo _id, not the human-readable orderId field)
-//
-// Amount/currency ALWAYS read from the order stored in the DB — never
-// trust an amount sent by the client. merchant_secret never leaves this server.
+// POST /api/payments/payhere/hash (CAMX-006)
 // =========================================================
 export const generateHash = async (req, res) => {
   try {
     const { orderId } = req.body;
+    const merchantId = process.env.PAYHERE_MERCHANT_ID;
+    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+    const sandbox = process.env.PAYHERE_SANDBOX === "true";
 
     if (!orderId) {
-      return res.status(400).json({ message: "orderId is required" });
+      return res.status(400).json({ success: false, message: "orderId is required" });
     }
 
-    if (!MERCHANT_ID || !MERCHANT_SECRET) {
-      console.error("PayHere merchant credentials are not configured — check PAYHERE_MERCHANT_ID / PAYHERE_MERCHANT_SECRET in .env");
-      return res.status(500).json({ message: "Payment gateway not configured" });
+    if (!merchantId || !merchantSecret) {
+      logger.error("PayHere merchant credentials are not configured in environment");
+      return res.status(500).json({ success: false, message: "Payment gateway not configured" });
     }
 
-    const order = await Order.findById(orderId);
+    // Find order by Mongo _id or custom orderId
+    const order = await Order.findOne({
+      $or: [{ _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { orderId }],
+    });
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // Safety net: your checkout controller's `status` default is "paid",
-    // which is fine for COD/BankTransfer but WRONG for a card order that
-    // hasn't been paid yet. Force it back to pending here before starting
-    // the payment popup, regardless of what the checkout controller set.
-    if (order.paymentMethod === "CARD" && (order.status === "paid" || order.paymentStatus !== "Pending")) {
+    // Authorization: If user is authenticated, ensure order ownership or admin
+    if (req.user && !isAdmin(req)) {
+      if (order.userEmail && req.user.email.toLowerCase() !== order.userEmail.toLowerCase()) {
+        return res.status(403).json({ success: false, message: "Forbidden: Not authorized for this order" });
+      }
+    }
+
+    // Reset status to pending for CARD payment attempts if not already paid
+    if (order.paymentMethod === "CARD" && order.paymentStatus !== "Paid") {
       order.status = "pending";
       order.paymentStatus = "Pending";
       await order.save();
     }
 
+    // Authoritative amount read directly from DB order record
     const amount = formatAmount(order.total);
-    const secretHash = md5(MERCHANT_SECRET);
-    const hash = md5(`${MERCHANT_ID}${order._id}${amount}${CURRENCY}${secretHash}`);
+    const secretHash = md5(merchantSecret);
+    const hash = md5(`${merchantId}${order._id}${amount}${CURRENCY}${secretHash}`);
 
     const fullName = (order.name || "Customer").trim();
     const [firstName, ...rest] = fullName.split(" ");
 
-    return res.json({
-      sandbox: SANDBOX,
-      merchant_id: MERCHANT_ID,
+    return res.status(200).json({
+      sandbox,
+      merchant_id: merchantId,
       order_id: String(order._id),
       amount,
       currency: CURRENCY,
@@ -97,42 +98,56 @@ export const generateHash = async (req, res) => {
       city: order.city,
     });
   } catch (error) {
-    console.error("PayHere hash generation error:", error);
-    return res.status(500).json({ message: "Failed to generate payment hash" });
+    logger.error("PayHere hash generation error", error);
+    return res.status(500).json({ success: false, message: "Failed to generate payment hash" });
   }
 };
 
 // =========================================================
-// POST /api/payments/payhere/notify
-// PayHere calls this server-to-server after processing the payment
-// (this URL MUST be publicly reachable — not localhost).
-//
-// Body is 'application/x-www-form-urlencoded' — make sure
-// express.urlencoded({ extended: true }) is registered in server.js.
-//
-// MUST always respond 200, otherwise PayHere keeps retrying the callback.
+// POST /api/payments/payhere/notify (CAMX-007)
 // =========================================================
 export const handleNotify = async (req, res) => {
   try {
     const { merchant_id, order_id, payment_id, payhere_amount, payhere_currency, status_code, md5sig, method } = req.body;
 
-    if (!MERCHANT_SECRET) {
-      console.error("PAYHERE_MERCHANT_SECRET missing — cannot verify notify callback");
+    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+
+    if (!merchantSecret) {
+      logger.error("PAYHERE_MERCHANT_SECRET missing — cannot verify notify callback");
       return res.status(200).send("OK");
     }
 
-    const secretHash = md5(MERCHANT_SECRET);
+    // 1. Signature Verification
+    const secretHash = md5(merchantSecret);
     const localSig = md5(`${merchant_id}${order_id}${payhere_amount}${payhere_currency}${status_code}${secretHash}`);
 
     if (localSig !== md5sig) {
-      console.warn("PayHere notify: signature mismatch — ignoring (possible spoofed request)", { order_id });
+      logger.security("PayHere notify: signature mismatch — possible spoofed request", {
+        order_id,
+        merchant_id,
+      });
       return res.status(200).send("OK");
     }
 
-    const order = await Order.findById(order_id);
+    // 2. Load Order from DB
+    const order = await Order.findOne({
+      $or: [{ _id: order_id.match(/^[0-9a-fA-F]{24}$/) ? order_id : null }, { orderId: order_id }],
+    });
 
     if (!order) {
-      console.warn("PayHere notify: order not found", order_id);
+      logger.warn("PayHere notify: order not found in DB", { order_id });
+      return res.status(200).send("OK");
+    }
+
+    // 3. Validate Amount & Currency matches DB record authoritatively
+    const expectedAmount = formatAmount(order.total);
+    if (payhere_amount !== expectedAmount || payhere_currency !== CURRENCY) {
+      logger.security("PayHere notify: Amount or currency tampering detected", {
+        orderId: order._id,
+        receivedAmount: payhere_amount,
+        expectedAmount,
+        receivedCurrency: payhere_currency,
+      });
       return res.status(200).send("OK");
     }
 
@@ -144,26 +159,27 @@ export const handleNotify = async (req, res) => {
       "-3": "Chargedback",
     };
 
-    order.paymentStatus = paymentStatusMap[String(status_code)] || "Pending";
+    const newPaymentStatus = paymentStatusMap[String(status_code)] || "Pending";
+
+    // Idempotency: Ignore if already marked as Paid
+    if (order.paymentStatus === "Paid" && newPaymentStatus === "Paid") {
+      logger.info("PayHere notify: duplicate payment confirmation ignored", { orderId: order._id });
+      return res.status(200).send("OK");
+    }
+
+    order.paymentStatus = newPaymentStatus;
     order.payhere = {
       paymentId: payment_id,
       method,
-      statusCode: status_code,
+      statusCode: String(status_code),
     };
 
-    // Only bump the fulfillment `status` field on a confirmed successful
-    // payment — never on failure/cancel, so we don't clobber other
-    // meanings of that field (e.g. "cancelled" used elsewhere for
-    // fulfillment cancellation, "fulfilled" set by your admin/POS flow).
-    if (order.paymentStatus === "Paid") {
+    if (newPaymentStatus === "Paid") {
       order.status = "paid";
     }
 
-    // Payment failed/was cancelled/charged back — give the stock back
-    // (checkoutOrder already deducted it when the order was created) and
-    // mark the order cancelled, but only once even if PayHere retries.
-    const isDeadEnd = ["Failed", "Cancelled", "Chargedback"].includes(order.paymentStatus);
-
+    // Payment failed / cancelled / chargedback -> Restore inventory safely once
+    const isDeadEnd = ["Failed", "Cancelled", "Chargedback"].includes(newPaymentStatus);
     if (isDeadEnd && order.paymentMethod === "CARD" && !order.stockRestored) {
       await restoreStock(order);
       order.stockRestored = true;
@@ -171,32 +187,47 @@ export const handleNotify = async (req, res) => {
     }
 
     await order.save();
+    logger.info("PayHere notify processed successfully", { orderId: order._id, paymentStatus: newPaymentStatus });
 
     return res.status(200).send("OK");
   } catch (error) {
-    console.error("PayHere notify error:", error);
-    // Still respond 200 — a 500 here makes PayHere retry repeatedly.
+    logger.error("PayHere notify error", error);
     return res.status(200).send("OK");
   }
 };
 
 // =========================================================
-// GET /api/payments/payhere/status/:orderId
-// Frontend polls this after payhere.onCompleted() fires — that callback
-// fires for BOTH successful and failed payments, so the real status only
-// exists once the notify_url callback above has landed and saved it.
+// GET /api/payments/payhere/status/:orderId (CAMX-008)
 // =========================================================
 export const getPaymentStatus = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.orderId).select("paymentStatus status total");
+    const { orderId } = req.params;
+
+    const order = await Order.findOne({
+      $or: [{ _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { orderId }],
+    }).select("paymentStatus status total userEmail");
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    return res.json({ paymentStatus: order.paymentStatus, status: order.status, total: order.total });
+    // Authorization: User must be owner of the order or Admin
+    if (req.user && !isAdmin(req)) {
+      if (order.userEmail && req.user.email.toLowerCase() !== order.userEmail.toLowerCase()) {
+        return res.status(403).json({ success: false, message: "Forbidden: Not authorized to view this payment status" });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+      total: order.total,
+    });
   } catch (error) {
-    console.error("PayHere status check error:", error);
-    return res.status(500).json({ message: "Failed to check payment status" });
+    logger.error("PayHere status check error", error);
+    return res.status(500).json({ success: false, message: "Failed to check payment status" });
   }
 };
+
+export default { generateHash, handleNotify, getPaymentStatus };
