@@ -36,16 +36,7 @@ app.use(
 // =========================
 // CORS CONFIGURATION (CAMX-020)
 // =========================
-const defaultAllowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://localhost:4173",
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:5173",
-  "https://camx.lk",
-  "https://admin.camx.lk",
-  "https://www.camx.lk",
-];
+const defaultAllowedOrigins = ["http://localhost:3000", "https://camxfrontend.vercel.app", "https://camx.lk", "https://admin.camx.lk", "https://www.camx.lk"];
 
 const envAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((origin) => origin.trim()) : [];
 
