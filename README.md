@@ -15,7 +15,7 @@ cp .env.example .env
 npm start
 ```
 
-The server uses `PORT` from the environment, defaulting to **5000**. The `start` script currently runs `nodemon index.js`; use a production process manager with a non-watch command for real deployments.
+The server uses `PORT` from the environment, defaulting to **5000**. The `start` script now runs `node index.js`; use `npm run dev` for the `nodemon` development watcher. Confirm the host's existing start command before deploying.
 
 The API base URL for local development is typically `http://localhost:5000/api`.
 
