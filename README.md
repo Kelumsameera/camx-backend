@@ -1,59 +1,55 @@
-# camx-backend
+# CAMX Backend
 
-This backend runs on port `4000` by default and serves the CAMX product, order, and authentication APIs.
+Express 5 + MongoDB API for CAMX e-commerce, including customers, products, orders, reviews, analytics, categories, contact enquiries and payment integration.
 
-## Local setup
+## Tech stack
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Create a `.env` file with:
-   ```env
-   MONGO_URI=<your-mongodb-connection-string>
-   SECRET_KEY=<your-jwt-secret>
-   PORT=4000
-   ```
-3. Start the server:
-   ```bash
-   npm start
-   ```
+Node.js, Express, Mongoose, JWT authentication, Helmet, rate limiting, Nodemailer and MongoDB.
 
-## API base URL
+## Setup
 
-`http://localhost:4000`
+```bash
+npm install
+cp .env.example .env
+# Configure the required values in .env
+npm start
+```
 
+The server uses `PORT` from the environment, defaulting to **5000**. The `start` script currently runs `nodemon index.js`; use a production process manager with a non-watch command for real deployments.
 
-A Node.js/MongoDB backend for the CAMX e-commerce application. It provides product management, user auth, order checkout, admin analytics, and order exports.
+The API base URL for local development is typically `http://localhost:5000/api`.
 
-## Run
+## Main route groups
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Create a `.env` file with:
-   ```env
-   MONGO_URI=<your-mongodb-connection-string>
-   SECRET_KEY=<your-jwt-secret>
-   ```
-3. Start the server:
-   ```bash
-   npm start
-   ```
+| Route prefix | Description |
+| --- | --- |
+| `/api/users` | Register, login, profile, password reset and admin accounts |
+| `/api/products` | Product catalogue and administration |
+| `/api/orders` | Cart/checkout and order management |
+| `/api/reviews` | Product reviews |
+| `/api/analytics` | Analytics |
+| `/api/contacts` | Contact enquiries |
+| `/api/categories` | Categories |
+| `/api/payments` | Payment integration |
 
-## Core routes
+See the route files under `routes/` for exact methods, permission guards and request shapes.
 
-- `POST /users` — create user
-- `POST /users/login` — login and receive JWT
-- `GET /products` — list available products
-- `POST /products` — create product (admin only)
-- `GET /products/:productId` — get product details
-- `PUT /products/:productId` — update product (admin only)
-- `DELETE /products/:productId` — delete product (admin only)
-- `POST /orders/checkout` — place an order
-- `GET /orders` — list orders (admin sees all, customers see own orders)
-- `GET /orders/:orderId` — get order details
-- `GET /orders/analytics/sales` — sales analytics (admin only)
-- `GET /orders/download` — download orders CSV (admin only)
+## Environment configuration
 
+Use `.env.example` as a guide for `PORT`, `MONGO_URI`, `SECRET_KEY`, `CORS_ALLOWED_ORIGINS`, email configuration and payment integration values. Never commit real credentials. Only enable payment providers and gateways after verifying current business requirements and provider credentials.
+
+## Verification
+
+```bash
+npm test
+```
+
+The repository includes Node test files under `tests/`. Test results have not been verified as part of this README change. Check the app's root health response (`GET /`) once started.
+
+## Related repositories
+
+- [CAMX frontend](https://github.com/Kelumsameera/camxfrontend)
+- [CAMX earlier frontend](https://github.com/Kelumsameera/camx_frontend)
+- [CAMX web experience](https://github.com/Kelumsameera/camx-lk)
+
+The frontend repositories overlap in purpose but are not identical. Verify which deployment uses which repository before archiving or consolidating them.
